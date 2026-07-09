@@ -22,15 +22,12 @@ import { formatCompact, formatDecimal, formatNumber, formatPercent } from '@/lib
 import {
   SEO_TAB_TO_CONNECTION,
   type SeoTab,
-  seoKpis,
-  seoTraffic,
-  seoChannels,
-  seoPosition,
-  seoTopQueries,
-  seoTopPages,
   type GscRow,
 } from '@/data/mockData'
 import { useReportConfig } from '@/lib/reportConfig'
+import { getProvider } from '@/services'
+import { useAsyncData } from '@/lib/useAsyncData'
+import { Loading, ErrorState } from '@/components/shared/AsyncState'
 
 const gscColumns = (firstHeader: string): Column<GscRow>[] => [
   { key: 'label', header: firstHeader, sortable: true },
@@ -67,6 +64,7 @@ const gscColumns = (firstHeader: string): Column<GscRow>[] => [
 export default function Seo() {
   const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<SeoTab>('Overview')
+  const { data, loading, error } = useAsyncData(() => getProvider().getSeo())
 
   // "Overview" siempre visible; el resto de herramientas según Configuración.
   const toolTabs = (['GA4', 'Search Console', 'Semrush'] as SeoTab[]).filter(
@@ -75,6 +73,10 @@ export default function Seo() {
   const visibleTabs: SeoTab[] = ['Overview', ...toolTabs]
   const activeTab: SeoTab = visibleTabs.includes(tab) ? tab : 'Overview'
 
+  if (loading) return <Loading />
+  if (error || !data)
+    return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
+
   return (
     <div className="space-y-6">
       {/* Tabs (cambian el visual pero no filtran datos) */}
@@ -82,7 +84,7 @@ export default function Seo() {
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-        {seoKpis.map((kpi) => (
+        {data.kpis.map((kpi) => (
           <KpiCard key={kpi.label} {...kpi} />
         ))}
       </div>
@@ -92,7 +94,7 @@ export default function Seo() {
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={seoTraffic}
+              data={data.traffic}
               margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
             >
               <defs>
@@ -163,7 +165,7 @@ export default function Seo() {
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={seoChannels}
+                data={data.channels}
                 margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
@@ -187,7 +189,7 @@ export default function Seo() {
                   cursor={{ fill: '#ffffff08' }}
                 />
                 <Bar dataKey="value" name="Sesiones" radius={[4, 4, 0, 0]}>
-                  {seoChannels.map((c) => (
+                  {data.channels.map((c) => (
                     <Cell
                       key={c.channel}
                       fill={c.organic ? '#F2FE54' : '#6B7280'}
@@ -204,7 +206,7 @@ export default function Seo() {
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
-                data={seoPosition}
+                data={data.position}
                 margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
               >
                 <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
@@ -247,7 +249,7 @@ export default function Seo() {
       <ChartCard title="Top búsquedas en Google" noPadding>
         <DataTable
           columns={gscColumns('Query')}
-          data={seoTopQueries}
+          data={data.topQueries}
           rowKey={(r) => r.label}
         />
       </ChartCard>
@@ -256,7 +258,7 @@ export default function Seo() {
       <ChartCard title="Páginas con más tráfico orgánico" noPadding>
         <DataTable
           columns={gscColumns('Página')}
-          data={seoTopPages}
+          data={data.topPages}
           rowKey={(r) => r.label}
         />
       </ChartCard>

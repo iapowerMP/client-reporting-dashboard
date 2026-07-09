@@ -33,13 +33,12 @@ import {
   PAID_PLATFORMS,
   PAID_TAB_TO_CONNECTION,
   computePaidKpis,
-  paidInvConv,
-  paidDistribution,
-  topCampaignsByRoas,
-  campaigns,
   type Campaign,
 } from '@/data/mockData'
 import { useReportConfig } from '@/lib/reportConfig'
+import { getProvider } from '@/services'
+import { useAsyncData } from '@/lib/useAsyncData'
+import { Loading, ErrorState } from '@/components/shared/AsyncState'
 
 const campaignColumns: Column<Campaign>[] = [
   {
@@ -109,6 +108,7 @@ const campaignColumns: Column<Campaign>[] = [
 export default function PaidMedia() {
   const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<PaidTab>('Todas')
+  const { data, loading, error } = useAsyncData(() => getProvider().getPaid())
 
   // Solo se muestran las plataformas activadas en Configuración.
   const platformTabs = PAID_PLATFORMS.filter((p) =>
@@ -118,13 +118,17 @@ export default function PaidMedia() {
   const activeTab: PaidTab = visibleTabs.includes(tab) ? tab : 'Todas'
   const visiblePlatforms: string[] = [...platformTabs]
 
-  const kpis = computePaidKpis(activeTab, visiblePlatforms)
+  if (loading) return <Loading />
+  if (error || !data)
+    return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
+
+  const kpis = computePaidKpis(activeTab, visiblePlatforms, data.campaigns)
   const rows =
     activeTab === 'Todas'
-      ? campaigns.filter((c) => visiblePlatforms.includes(c.platform))
-      : campaigns.filter((c) => c.platform === activeTab)
+      ? data.campaigns.filter((c) => visiblePlatforms.includes(c.platform))
+      : data.campaigns.filter((c) => c.platform === activeTab)
 
-  const visibleDistribution = paidDistribution.filter((d) =>
+  const visibleDistribution = data.distribution.filter((d) =>
     visiblePlatforms.includes(d.name),
   )
   const distributionTotal = formatCurrency(
@@ -148,7 +152,7 @@ export default function PaidMedia() {
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={paidInvConv}
+              data={data.invConv}
               margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
             >
               <defs>
@@ -273,7 +277,7 @@ export default function PaidMedia() {
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={topCampaignsByRoas}
+                data={data.topRoas}
                 layout="vertical"
                 margin={{ top: 8, right: 24, left: 8, bottom: 0 }}
               >

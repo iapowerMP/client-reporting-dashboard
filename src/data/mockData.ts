@@ -280,11 +280,12 @@ import {
 export function computePaidKpis(
   tab: PaidTab,
   visiblePlatforms: string[] = [...PAID_PLATFORMS],
+  data: Campaign[] = campaigns,
 ): KpiData[] {
   const rows =
     tab === 'Todas'
-      ? campaigns.filter((c) => visiblePlatforms.includes(c.platform))
-      : campaigns.filter((c) => c.platform === tab)
+      ? data.filter((c) => visiblePlatforms.includes(c.platform))
+      : data.filter((c) => c.platform === tab)
   const allVisible = PAID_PLATFORMS.every((p) => visiblePlatforms.includes(p))
 
   const inversion = rows.reduce((s, c) => s + c.inversion, 0)
@@ -510,7 +511,7 @@ export const SOCIAL_COLORS: Record<Exclude<SocialTab, 'Todas'>, string> = {
 }
 
 /** Datos base por plataforma para poder recalcular KPIs al filtrar. */
-interface SocialPlatformStats {
+export interface SocialPlatformStats {
   platform: Exclude<SocialTab, 'Todas'>
   seguidores: number
   crecimientoNeto: number
@@ -534,6 +535,7 @@ export const socialStats: SocialPlatformStats[] = [
 export function computeSocialKpis(
   tab: SocialTab,
   visiblePlatforms: string[] = [...SOCIAL_PLATFORMS],
+  data: SocialPlatformStats[] = socialStats,
 ): KpiData[] {
   if (tab === 'Todas') {
     const allVisible = SOCIAL_PLATFORMS.every((p) => visiblePlatforms.includes(p))
@@ -548,7 +550,7 @@ export function computeSocialKpis(
       ]
     }
     // Recalcular totales sumando solo las plataformas visibles.
-    const stats = socialStats.filter((s) => visiblePlatforms.includes(s.platform))
+    const stats = data.filter((s) => visiblePlatforms.includes(s.platform))
     const seguidores = stats.reduce((a, s) => a + s.seguidores, 0)
     const crecimiento = stats.reduce((a, s) => a + s.crecimientoNeto, 0)
     const alcance = stats.reduce((a, s) => a + s.alcance, 0)
@@ -567,7 +569,7 @@ export function computeSocialKpis(
     ]
   }
 
-  const s = socialStats.find((x) => x.platform === tab)!
+  const s = data.find((x) => x.platform === tab)!
   return [
     { label: 'Seguidores', value: formatNumber(s.seguidores), delta: '▲ 3,1%', deltaPositive: true },
     { label: 'Crecimiento neto', value: `+${formatNumber(s.crecimientoNeto)}`, delta: '▲ vs anterior', deltaPositive: true },

@@ -14,13 +14,10 @@ import ChartTooltip from '@/components/shared/ChartTooltip'
 import DataTable, { type Column } from '@/components/shared/DataTable'
 import StatusBadge from '@/components/shared/StatusBadge'
 import { cn, formatCompact, formatNumber } from '@/lib/utils'
-import {
-  overviewSummary,
-  globalPerformance,
-  recentActivity,
-  type SummaryCard,
-  type AlertRow,
-} from '@/data/mockData'
+import { getProvider } from '@/services'
+import { useAsyncData } from '@/lib/useAsyncData'
+import { Loading, ErrorState } from '@/components/shared/AsyncState'
+import { type SummaryCard, type AlertRow } from '@/data/mockData'
 
 const CARD_ICONS: Record<SummaryCard['key'], LucideIcon> = {
   paid: DollarSign,
@@ -85,11 +82,19 @@ const activityColumns: Column<AlertRow>[] = [
 ]
 
 export default function Overview() {
+  const { data, loading, error } = useAsyncData(() => getProvider().getOverview())
+
+  if (loading) return <Loading />
+  if (error || !data)
+    return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
+
+  const { summary, globalPerformance, recentActivity } = data
+
   return (
     <div className="space-y-6">
       {/* 3 cards de resumen */}
       <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        {overviewSummary.map((card) => (
+        {summary.map((card) => (
           <SummaryCardView key={card.key} card={card} />
         ))}
       </div>
