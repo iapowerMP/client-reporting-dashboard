@@ -27,13 +27,12 @@ import {
   SOCIAL_COLORS,
   type SocialTab,
   computeSocialKpis,
-  socialFollowers,
-  socialEngagement,
-  socialReach,
-  topPosts,
   type Post,
 } from '@/data/mockData'
 import { useReportConfig } from '@/lib/reportConfig'
+import { getProvider } from '@/services'
+import { useAsyncData } from '@/lib/useAsyncData'
+import { Loading, ErrorState } from '@/components/shared/AsyncState'
 
 function PostCard({ post }: { post: Post }) {
   const color = SOCIAL_COLORS[post.platform]
@@ -75,6 +74,7 @@ function PostCard({ post }: { post: Post }) {
 export default function Social() {
   const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<SocialTab>('Todas')
+  const { data, loading, error } = useAsyncData(() => getProvider().getSocial())
 
   // Solo se muestran las redes activadas en Configuración.
   const platformTabs = SOCIAL_PLATFORMS.filter((p) =>
@@ -84,7 +84,11 @@ export default function Social() {
   const activeTab: SocialTab = visibleTabs.includes(tab) ? tab : 'Todas'
   const visiblePlatforms: string[] = [...platformTabs]
 
-  const kpis = computeSocialKpis(activeTab, visiblePlatforms)
+  if (loading) return <Loading />
+  if (error || !data)
+    return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
+
+  const kpis = computeSocialKpis(activeTab, visiblePlatforms, data.stats)
 
   // Series de seguidores visibles según la pestaña.
   const followerKeys = activeTab === 'Todas' ? platformTabs : [activeTab]
@@ -92,14 +96,14 @@ export default function Social() {
   // Engagement filtrado por plataforma.
   const engagementData =
     activeTab === 'Todas'
-      ? socialEngagement.filter((e) => visiblePlatforms.includes(e.platform))
-      : socialEngagement.filter((e) => e.platform === activeTab)
+      ? data.engagement.filter((e) => visiblePlatforms.includes(e.platform))
+      : data.engagement.filter((e) => e.platform === activeTab)
 
   // Alcance (donut) filtrado por plataforma.
   const reachData =
     activeTab === 'Todas'
-      ? socialReach.filter((r) => visiblePlatforms.includes(r.name))
-      : socialReach.filter((r) => r.name === activeTab)
+      ? data.reach.filter((r) => visiblePlatforms.includes(r.name))
+      : data.reach.filter((r) => r.name === activeTab)
   const reachCenter =
     activeTab === 'Todas'
       ? formatCompact(reachData.reduce((s, r) => s + r.value, 0))
@@ -108,8 +112,8 @@ export default function Social() {
   // Posts filtrados por plataforma.
   const posts =
     activeTab === 'Todas'
-      ? topPosts.filter((p) => visiblePlatforms.includes(p.platform))
-      : topPosts.filter((p) => p.platform === activeTab)
+      ? data.posts.filter((p) => visiblePlatforms.includes(p.platform))
+      : data.posts.filter((p) => p.platform === activeTab)
 
   return (
     <div className="space-y-6">
@@ -128,7 +132,7 @@ export default function Social() {
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
-              data={socialFollowers}
+              data={data.followers}
               margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
