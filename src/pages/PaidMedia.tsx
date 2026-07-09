@@ -1,0 +1,304 @@
+import { useState } from 'react'
+import {
+  ResponsiveContainer,
+  ComposedChart,
+  Area,
+  Line,
+  Bar,
+  BarChart,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from 'recharts'
+import ChartCard from '@/components/shared/ChartCard'
+import ChartTooltip from '@/components/shared/ChartTooltip'
+import Tabs from '@/components/shared/Tabs'
+import KpiCard from '@/components/shared/KpiCard'
+import DataTable, { type Column } from '@/components/shared/DataTable'
+import PlatformBadge from '@/components/shared/PlatformBadge'
+import StatusBadge from '@/components/shared/StatusBadge'
+import {
+  formatCompact,
+  formatCurrency,
+  formatNumber,
+  formatPercent,
+  formatRoas,
+} from '@/lib/utils'
+import {
+  PAID_TABS,
+  type PaidTab,
+  computePaidKpis,
+  paidInvConv,
+  paidDistribution,
+  paidDistributionTotal,
+  topCampaignsByRoas,
+  campaigns,
+  type Campaign,
+} from '@/data/mockData'
+
+const campaignColumns: Column<Campaign>[] = [
+  {
+    key: 'platform',
+    header: 'Plataforma',
+    sortable: true,
+    render: (r) => <PlatformBadge platform={r.platform} />,
+  },
+  { key: 'name', header: 'Campaña', sortable: true },
+  {
+    key: 'status',
+    header: 'Estado',
+    sortable: true,
+    render: (r) => <StatusBadge status={r.status} />,
+  },
+  {
+    key: 'inversion',
+    header: 'Inversión',
+    align: 'right',
+    sortable: true,
+    render: (r) => formatCurrency(r.inversion),
+  },
+  {
+    key: 'impresiones',
+    header: 'Impr.',
+    align: 'right',
+    sortable: true,
+    render: (r) => formatNumber(r.impresiones),
+  },
+  {
+    key: 'clics',
+    header: 'Clics',
+    align: 'right',
+    sortable: true,
+    render: (r) => formatNumber(r.clics),
+  },
+  {
+    key: 'ctr',
+    header: 'CTR',
+    align: 'right',
+    sortable: true,
+    render: (r) => formatPercent(r.ctr),
+  },
+  {
+    key: 'cpc',
+    header: 'CPC',
+    align: 'right',
+    sortable: true,
+    render: (r) => formatCurrency(r.cpc, 2),
+  },
+  {
+    key: 'conversiones',
+    header: 'Conv.',
+    align: 'right',
+    sortable: true,
+    render: (r) => formatNumber(r.conversiones),
+  },
+  {
+    key: 'roas',
+    header: 'ROAS',
+    align: 'right',
+    sortable: true,
+    render: (r) => formatRoas(r.roas, 1),
+  },
+]
+
+export default function PaidMedia() {
+  const [tab, setTab] = useState<PaidTab>('Todas')
+
+  const kpis = computePaidKpis(tab)
+  const rows =
+    tab === 'Todas' ? campaigns : campaigns.filter((c) => c.platform === tab)
+
+  return (
+    <div className="space-y-6">
+      {/* Tabs de plataforma */}
+      <Tabs tabs={PAID_TABS} active={tab} onChange={setTab} />
+
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
+        {kpis.map((kpi) => (
+          <KpiCard key={kpi.label} {...kpi} highlight={kpi.label === 'ROAS'} />
+        ))}
+      </div>
+
+      {/* Gráfico 1: Inversión vs Conversiones */}
+      <ChartCard title="Inversión vs Conversiones — Últimos 30 días">
+        <div className="h-80">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart
+              data={paidInvConv}
+              margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+            >
+              <defs>
+                <linearGradient id="invGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#F2FE54" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="#F2FE54" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
+              <XAxis
+                dataKey="date"
+                stroke="#9CA3AF"
+                fontSize={11}
+                tickLine={false}
+                axisLine={{ stroke: '#2A2D36' }}
+                interval={4}
+              />
+              <YAxis
+                yAxisId="left"
+                stroke="#9CA3AF"
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => formatCompact(v as number)}
+                width={44}
+              />
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                stroke="#9CA3AF"
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                width={32}
+              />
+              <Tooltip
+                content={
+                  <ChartTooltip
+                    formatter={(v, name) =>
+                      name === 'Inversión' ? formatCurrency(v) : formatNumber(v)
+                    }
+                  />
+                }
+                cursor={{ stroke: '#2A2D36' }}
+              />
+              <Area
+                yAxisId="left"
+                type="monotone"
+                dataKey="inversion"
+                name="Inversión"
+                stroke="#F2FE54"
+                strokeWidth={2}
+                fill="url(#invGradient)"
+              />
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="conversiones"
+                name="Conversiones"
+                stroke="#FFFFFF"
+                strokeWidth={2}
+                dot={{ r: 2, fill: '#FFFFFF' }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      </ChartCard>
+
+      {/* Fila de 2 gráficos */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Gráfico 2: Distribución por plataforma (donut) */}
+        <ChartCard title="Distribución por plataforma">
+          <div className="relative h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={paidDistribution}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={70}
+                  outerRadius={100}
+                  paddingAngle={2}
+                  stroke="none"
+                >
+                  {paidDistribution.map((slice) => (
+                    <Cell key={slice.name} fill={slice.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  content={<ChartTooltip formatter={(v) => formatCurrency(v)} />}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            {/* Etiqueta central del donut */}
+            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+              <span className="text-2xl font-bold text-white">
+                {paidDistributionTotal}
+              </span>
+              <span className="text-xs text-text-secondary">Total</span>
+            </div>
+          </div>
+          {/* Leyenda */}
+          <div className="mt-2 flex flex-wrap justify-center gap-4">
+            {paidDistribution.map((slice) => (
+              <div key={slice.name} className="flex items-center gap-2 text-xs">
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: slice.color }}
+                />
+                <span className="text-text-secondary">
+                  {slice.name} · {slice.percent}
+                </span>
+              </div>
+            ))}
+          </div>
+        </ChartCard>
+
+        {/* Gráfico 3: Top 5 campañas por ROAS (barras horizontales) */}
+        <ChartCard title="Top 5 campañas por ROAS">
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={topCampaignsByRoas}
+                layout="vertical"
+                margin={{ top: 8, right: 24, left: 8, bottom: 0 }}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#2A2D36"
+                  horizontal={false}
+                />
+                <XAxis
+                  type="number"
+                  stroke="#9CA3AF"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={{ stroke: '#2A2D36' }}
+                  tickFormatter={(v) => `${formatNumber(v as number)}x`}
+                />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  stroke="#9CA3AF"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={false}
+                  width={130}
+                />
+                <Tooltip
+                  content={<ChartTooltip formatter={(v) => formatRoas(v, 1)} />}
+                  cursor={{ fill: '#ffffff08' }}
+                />
+                <Bar dataKey="roas" name="ROAS" fill="#F2FE54" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </ChartCard>
+      </div>
+
+      {/* Tabla de campañas */}
+      <ChartCard title="Detalle de campañas" noPadding>
+        <DataTable
+          columns={campaignColumns}
+          data={rows}
+          rowKey={(r) => `${r.platform}-${r.name}`}
+        />
+      </ChartCard>
+    </div>
+  )
+}
