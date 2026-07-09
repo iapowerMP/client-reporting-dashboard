@@ -20,7 +20,7 @@ import KpiCard from '@/components/shared/KpiCard'
 import DataTable, { type Column } from '@/components/shared/DataTable'
 import { formatCompact, formatDecimal, formatNumber, formatPercent } from '@/lib/utils'
 import {
-  SEO_TABS,
+  SEO_TAB_TO_CONNECTION,
   type SeoTab,
   seoKpis,
   seoTraffic,
@@ -30,6 +30,7 @@ import {
   seoTopPages,
   type GscRow,
 } from '@/data/mockData'
+import { useReportConfig } from '@/lib/reportConfig'
 
 const gscColumns = (firstHeader: string): Column<GscRow>[] => [
   { key: 'label', header: firstHeader, sortable: true },
@@ -64,12 +65,20 @@ const gscColumns = (firstHeader: string): Column<GscRow>[] => [
 ]
 
 export default function Seo() {
+  const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<SeoTab>('Overview')
+
+  // "Overview" siempre visible; el resto de herramientas según Configuración.
+  const toolTabs = (['GA4', 'Search Console', 'Semrush'] as SeoTab[]).filter(
+    (t) => isVisible(SEO_TAB_TO_CONNECTION[t]),
+  )
+  const visibleTabs: SeoTab[] = ['Overview', ...toolTabs]
+  const activeTab: SeoTab = visibleTabs.includes(tab) ? tab : 'Overview'
 
   return (
     <div className="space-y-6">
       {/* Tabs (cambian el visual pero no filtran datos) */}
-      <Tabs tabs={SEO_TABS} active={tab} onChange={setTab} />
+      <Tabs tabs={visibleTabs} active={activeTab} onChange={setTab} />
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">

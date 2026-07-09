@@ -3,6 +3,8 @@ import { RefreshCw, UploadCloud, Loader2 } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import DataTable, { type Column } from '@/components/shared/DataTable'
 import StatusBadge from '@/components/shared/StatusBadge'
+import Toggle from '@/components/shared/Toggle'
+import { useReportConfig } from '@/lib/reportConfig'
 import { cn } from '@/lib/utils'
 import {
   clientData,
@@ -57,10 +59,14 @@ function ConnectionCard({
   conn,
   syncing,
   onSync,
+  visible,
+  onToggleVisible,
 }: {
   conn: Connection
   syncing: boolean
   onSync: () => void
+  visible: boolean
+  onToggleVisible: (value: boolean) => void
 }) {
   return (
     <div className="rounded-card border border-border bg-card p-5">
@@ -104,6 +110,18 @@ function ConnectionCard({
           )}
         </button>
       </div>
+
+      {/* Visibilidad en el informe */}
+      <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
+        <span className="text-xs text-text-secondary">
+          Mostrar en el informe
+        </span>
+        <Toggle
+          checked={visible}
+          onChange={onToggleVisible}
+          label={`Mostrar ${conn.platform} en el informe`}
+        />
+      </div>
     </div>
   )
 }
@@ -135,6 +153,7 @@ const logColumns: Column<SyncLog>[] = [
 /* -------------------------------- Página --------------------------------- */
 
 export default function Settings() {
+  const { isVisible, setVisible } = useReportConfig()
   const [toast, setToast] = useState<string | null>(null)
   const [syncingIds, setSyncingIds] = useState<string[]>([])
 
@@ -201,6 +220,8 @@ export default function Settings() {
               conn={conn}
               syncing={syncingIds.includes(conn.id)}
               onSync={() => handleSyncOne(conn.id)}
+              visible={isVisible(conn.id)}
+              onToggleVisible={(v) => setVisible(conn.id, v)}
             />
           ))}
         </div>
