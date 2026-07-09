@@ -29,16 +29,17 @@ import {
   formatRoas,
 } from '@/lib/utils'
 import {
-  PAID_TABS,
   type PaidTab,
+  PAID_PLATFORMS,
+  PAID_TAB_TO_CONNECTION,
   computePaidKpis,
   paidInvConv,
   paidDistribution,
-  paidDistributionTotal,
   topCampaignsByRoas,
   campaigns,
   type Campaign,
 } from '@/data/mockData'
+import { useReportConfig } from '@/lib/reportConfig'
 
 const campaignColumns: Column<Campaign>[] = [
   {
@@ -106,16 +107,34 @@ const campaignColumns: Column<Campaign>[] = [
 ]
 
 export default function PaidMedia() {
+  const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<PaidTab>('Todas')
 
-  const kpis = computePaidKpis(tab)
+  // Solo se muestran las plataformas activadas en Configuración.
+  const platformTabs = PAID_PLATFORMS.filter((p) =>
+    isVisible(PAID_TAB_TO_CONNECTION[p]),
+  )
+  const visibleTabs: PaidTab[] = ['Todas', ...platformTabs]
+  const activeTab: PaidTab = visibleTabs.includes(tab) ? tab : 'Todas'
+  const visiblePlatforms: string[] = [...platformTabs]
+
+  const kpis = computePaidKpis(activeTab, visiblePlatforms)
   const rows =
-    tab === 'Todas' ? campaigns : campaigns.filter((c) => c.platform === tab)
+    activeTab === 'Todas'
+      ? campaigns.filter((c) => visiblePlatforms.includes(c.platform))
+      : campaigns.filter((c) => c.platform === activeTab)
+
+  const visibleDistribution = paidDistribution.filter((d) =>
+    visiblePlatforms.includes(d.name),
+  )
+  const distributionTotal = formatCurrency(
+    visibleDistribution.reduce((s, d) => s + d.value, 0),
+  )
 
   return (
     <div className="space-y-6">
       {/* Tabs de plataforma */}
-      <Tabs tabs={PAID_TABS} active={tab} onChange={setTab} />
+      <Tabs tabs={visibleTabs} active={activeTab} onChange={setTab} />
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
@@ -206,7 +225,7 @@ export default function PaidMedia() {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={paidDistribution}
+                  data={visibleDistribution}
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
@@ -216,7 +235,7 @@ export default function PaidMedia() {
                   paddingAngle={2}
                   stroke="none"
                 >
-                  {paidDistribution.map((slice) => (
+                  {visibleDistribution.map((slice) => (
                     <Cell key={slice.name} fill={slice.color} />
                   ))}
                 </Pie>
@@ -228,14 +247,14 @@ export default function PaidMedia() {
             {/* Etiqueta central del donut */}
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
               <span className="text-2xl font-bold text-white">
-                {paidDistributionTotal}
+                {distributionTotal}
               </span>
               <span className="text-xs text-text-secondary">Total</span>
             </div>
           </div>
           {/* Leyenda */}
           <div className="mt-2 flex flex-wrap justify-center gap-4">
-            {paidDistribution.map((slice) => (
+            {visibleDistribution.map((slice) => (
               <div key={slice.name} className="flex items-center gap-2 text-xs">
                 <span
                   className="h-2.5 w-2.5 rounded-full"

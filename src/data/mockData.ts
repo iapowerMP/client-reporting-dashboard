@@ -198,6 +198,16 @@ export const recentActivity: AlertRow[] = [
 export type PaidTab = 'Todas' | 'Meta Ads' | 'Google Ads' | 'TikTok Ads'
 export const PAID_TABS: PaidTab[] = ['Todas', 'Meta Ads', 'Google Ads', 'TikTok Ads']
 
+/** Plataformas de Paid Media (sin la pestaña agregada "Todas"). */
+export const PAID_PLATFORMS = ['Meta Ads', 'Google Ads', 'TikTok Ads'] as const
+
+/** Mapea cada pestaña de plataforma con el id de su conexión en Configuración. */
+export const PAID_TAB_TO_CONNECTION: Record<string, string> = {
+  'Meta Ads': 'meta-ads',
+  'Google Ads': 'google-ads',
+  'TikTok Ads': 'tiktok-ads',
+}
+
 export interface Campaign {
   platform: Extract<Platform, 'Meta Ads' | 'Google Ads' | 'TikTok Ads'>
   name: string
@@ -267,9 +277,15 @@ import {
  * "Todas" devuelve los valores destacados del brief; el resto se computa
  * sumando las campañas de esa plataforma y derivando los ratios.
  */
-export function computePaidKpis(tab: PaidTab): KpiData[] {
+export function computePaidKpis(
+  tab: PaidTab,
+  visiblePlatforms: string[] = [...PAID_PLATFORMS],
+): KpiData[] {
   const rows =
-    tab === 'Todas' ? campaigns : campaigns.filter((c) => c.platform === tab)
+    tab === 'Todas'
+      ? campaigns.filter((c) => visiblePlatforms.includes(c.platform))
+      : campaigns.filter((c) => c.platform === tab)
+  const allVisible = PAID_PLATFORMS.every((p) => visiblePlatforms.includes(p))
 
   const inversion = rows.reduce((s, c) => s + c.inversion, 0)
   const impresiones = rows.reduce((s, c) => s + c.impresiones, 0)
@@ -298,7 +314,9 @@ export function computePaidKpis(tab: PaidTab): KpiData[] {
   return PAID_KPI_META.map((meta) => ({
     label: meta.label,
     value:
-      tab === 'Todas' ? PAID_KPI_TODAS_VALUES[meta.label] : computed[meta.label],
+      tab === 'Todas' && allVisible
+        ? PAID_KPI_TODAS_VALUES[meta.label]
+        : computed[meta.label],
     delta: meta.delta,
     deltaPositive: meta.deltaPositive,
   }))
@@ -357,6 +375,13 @@ export const topCampaignsByRoas: RoasBar[] = [
 
 export type SeoTab = 'Overview' | 'GA4' | 'Search Console' | 'Semrush'
 export const SEO_TABS: SeoTab[] = ['Overview', 'GA4', 'Search Console', 'Semrush']
+
+/** Herramientas de SEO que dependen de una conexión (la pestaña "Overview" siempre está). */
+export const SEO_TAB_TO_CONNECTION: Record<string, string> = {
+  GA4: 'ga4',
+  'Search Console': 'gsc',
+  Semrush: 'semrush',
+}
 
 export const seoKpis: KpiData[] = [
   { label: 'Sesiones', value: formatNumber(47291), delta: '▲ 12,5%', deltaPositive: true },
@@ -460,6 +485,22 @@ export const SOCIAL_TABS: SocialTab[] = [
   'YouTube',
 ]
 
+/** Plataformas de RRSS (sin la pestaña agregada "Todas"). */
+export const SOCIAL_PLATFORMS = [
+  'Instagram',
+  'Facebook',
+  'TikTok',
+  'YouTube',
+] as const
+
+/** Mapea cada pestaña de RRSS con el id de su conexión en Configuración. */
+export const SOCIAL_TAB_TO_CONNECTION: Record<string, string> = {
+  Instagram: 'instagram',
+  Facebook: 'facebook',
+  TikTok: 'tiktok-org',
+  YouTube: 'youtube',
+}
+
 /** Colores por red social. */
 export const SOCIAL_COLORS: Record<Exclude<SocialTab, 'Todas'>, string> = {
   Instagram: '#E1306C',
@@ -490,15 +531,39 @@ export const socialStats: SocialPlatformStats[] = [
  * KPIs de Redes Sociales. "Todas" muestra los totales del brief; al filtrar
  * por plataforma se recalculan a partir de socialStats.
  */
-export function computeSocialKpis(tab: SocialTab): KpiData[] {
+export function computeSocialKpis(
+  tab: SocialTab,
+  visiblePlatforms: string[] = [...SOCIAL_PLATFORMS],
+): KpiData[] {
   if (tab === 'Todas') {
+    const allVisible = SOCIAL_PLATFORMS.every((p) => visiblePlatforms.includes(p))
+    if (allVisible) {
+      return [
+        { label: 'Seguidores totales', value: formatNumber(48720), delta: '▲ 3,1%', deltaPositive: true },
+        { label: 'Crecimiento neto', value: `+${formatNumber(1480)}`, delta: '▲ 340 vs anterior', deltaPositive: true },
+        { label: 'Alcance total', value: formatNumber(892400), delta: '▲ 7,8%', deltaPositive: true },
+        { label: 'Impresiones', value: formatNumber(1428300), delta: '▲ 9,2%', deltaPositive: true },
+        { label: 'Engagement Rate', value: formatPercent(4.8, 1), delta: '▲ 0,3pp', deltaPositive: true },
+        { label: 'Publicaciones', value: formatNumber(47) },
+      ]
+    }
+    // Recalcular totales sumando solo las plataformas visibles.
+    const stats = socialStats.filter((s) => visiblePlatforms.includes(s.platform))
+    const seguidores = stats.reduce((a, s) => a + s.seguidores, 0)
+    const crecimiento = stats.reduce((a, s) => a + s.crecimientoNeto, 0)
+    const alcance = stats.reduce((a, s) => a + s.alcance, 0)
+    const impresiones = stats.reduce((a, s) => a + s.impresiones, 0)
+    const publicaciones = stats.reduce((a, s) => a + s.publicaciones, 0)
+    const engagement = stats.length
+      ? stats.reduce((a, s) => a + s.engagementRate, 0) / stats.length
+      : 0
     return [
-      { label: 'Seguidores totales', value: formatNumber(48720), delta: '▲ 3,1%', deltaPositive: true },
-      { label: 'Crecimiento neto', value: `+${formatNumber(1480)}`, delta: '▲ 340 vs anterior', deltaPositive: true },
-      { label: 'Alcance total', value: formatNumber(892400), delta: '▲ 7,8%', deltaPositive: true },
-      { label: 'Impresiones', value: formatNumber(1428300), delta: '▲ 9,2%', deltaPositive: true },
-      { label: 'Engagement Rate', value: formatPercent(4.8, 1), delta: '▲ 0,3pp', deltaPositive: true },
-      { label: 'Publicaciones', value: formatNumber(47) },
+      { label: 'Seguidores totales', value: formatNumber(seguidores), delta: '▲ 3,1%', deltaPositive: true },
+      { label: 'Crecimiento neto', value: `+${formatNumber(crecimiento)}`, delta: '▲ vs anterior', deltaPositive: true },
+      { label: 'Alcance total', value: formatNumber(alcance), delta: '▲ 7,8%', deltaPositive: true },
+      { label: 'Impresiones', value: formatNumber(impresiones), delta: '▲ 9,2%', deltaPositive: true },
+      { label: 'Engagement Rate', value: formatPercent(engagement, 1), delta: '▲ 0,3pp', deltaPositive: true },
+      { label: 'Publicaciones', value: formatNumber(publicaciones) },
     ]
   }
 

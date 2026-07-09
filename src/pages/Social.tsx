@@ -22,19 +22,18 @@ import KpiCard from '@/components/shared/KpiCard'
 import PlatformBadge from '@/components/shared/PlatformBadge'
 import { formatCompact, formatNumber } from '@/lib/utils'
 import {
-  SOCIAL_TABS,
+  SOCIAL_PLATFORMS,
+  SOCIAL_TAB_TO_CONNECTION,
   SOCIAL_COLORS,
   type SocialTab,
   computeSocialKpis,
   socialFollowers,
   socialEngagement,
   socialReach,
-  socialReachTotal,
   topPosts,
   type Post,
 } from '@/data/mockData'
-
-const FOLLOWER_SERIES = ['Instagram', 'Facebook', 'TikTok', 'YouTube'] as const
+import { useReportConfig } from '@/lib/reportConfig'
 
 function PostCard({ post }: { post: Post }) {
   const color = SOCIAL_COLORS[post.platform]
@@ -74,35 +73,48 @@ function PostCard({ post }: { post: Post }) {
 }
 
 export default function Social() {
+  const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<SocialTab>('Todas')
 
-  const kpis = computeSocialKpis(tab)
+  // Solo se muestran las redes activadas en Configuración.
+  const platformTabs = SOCIAL_PLATFORMS.filter((p) =>
+    isVisible(SOCIAL_TAB_TO_CONNECTION[p]),
+  )
+  const visibleTabs: SocialTab[] = ['Todas', ...platformTabs]
+  const activeTab: SocialTab = visibleTabs.includes(tab) ? tab : 'Todas'
+  const visiblePlatforms: string[] = [...platformTabs]
+
+  const kpis = computeSocialKpis(activeTab, visiblePlatforms)
 
   // Series de seguidores visibles según la pestaña.
-  const followerKeys =
-    tab === 'Todas' ? FOLLOWER_SERIES : ([tab] as (typeof FOLLOWER_SERIES)[number][])
+  const followerKeys = activeTab === 'Todas' ? platformTabs : [activeTab]
 
   // Engagement filtrado por plataforma.
   const engagementData =
-    tab === 'Todas'
-      ? socialEngagement
-      : socialEngagement.filter((e) => e.platform === tab)
+    activeTab === 'Todas'
+      ? socialEngagement.filter((e) => visiblePlatforms.includes(e.platform))
+      : socialEngagement.filter((e) => e.platform === activeTab)
 
   // Alcance (donut) filtrado por plataforma.
   const reachData =
-    tab === 'Todas' ? socialReach : socialReach.filter((r) => r.name === tab)
+    activeTab === 'Todas'
+      ? socialReach.filter((r) => visiblePlatforms.includes(r.name))
+      : socialReach.filter((r) => r.name === activeTab)
   const reachCenter =
-    tab === 'Todas'
-      ? socialReachTotal
+    activeTab === 'Todas'
+      ? formatCompact(reachData.reduce((s, r) => s + r.value, 0))
       : formatCompact(reachData[0]?.value ?? 0)
 
   // Posts filtrados por plataforma.
-  const posts = tab === 'Todas' ? topPosts : topPosts.filter((p) => p.platform === tab)
+  const posts =
+    activeTab === 'Todas'
+      ? topPosts.filter((p) => visiblePlatforms.includes(p.platform))
+      : topPosts.filter((p) => p.platform === activeTab)
 
   return (
     <div className="space-y-6">
       {/* Tabs (filtran el contenido) */}
-      <Tabs tabs={SOCIAL_TABS} active={tab} onChange={setTab} />
+      <Tabs tabs={visibleTabs} active={activeTab} onChange={setTab} />
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
