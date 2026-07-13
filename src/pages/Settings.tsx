@@ -1,5 +1,5 @@
 import { useRef, useState, type ChangeEvent } from 'react'
-import { useOutletContext, useParams } from 'react-router-dom'
+import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
 import { RefreshCw, UploadCloud, Loader2 } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import DataTable, { type Column } from '@/components/shared/DataTable'
@@ -182,6 +182,7 @@ const logColumns: Column<SyncLog>[] = [
 
 export default function Settings() {
   const { clientSlug = '' } = useParams()
+  const navigate = useNavigate()
   const clientInfo = useOutletContext<ReturnType<typeof useClientInfo>>()
   const { isVisible, setVisible } = useReportConfig()
   const { data, loading, error } = useAsyncData(
@@ -234,6 +235,13 @@ export default function Settings() {
         }),
       })
       if (!resp.ok) throw new Error()
+      const body = await resp.json()
+      const newSlug: string | undefined = body?.client?.slug
+      if (newSlug && newSlug !== clientSlug) {
+        showToast('Guardado — la URL del informe ha cambiado')
+        navigate(`/c/${newSlug}/settings`, { replace: true })
+        return
+      }
       await clientInfo.refetch()
       showToast('Guardado correctamente')
     } catch {
@@ -324,6 +332,11 @@ export default function Settings() {
                 />
               </label>
             </div>
+            <p className="mt-1.5 text-xs text-text-secondary">
+              Recomendado: imagen cuadrada de al menos 128×128 px (PNG con fondo
+              transparente) — se muestra como icono redondeado arriba a la
+              izquierda del dashboard. Máximo 2 MB.
+            </p>
           </div>
         </div>
         <div className="mt-5">
