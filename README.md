@@ -69,6 +69,14 @@ deben resolverse en el servidor; nunca se exponen en el navegador.
 > Estado actual: las tarjetas de Configuración ya existen y permiten activar o
 > desactivar cada fuente en el informe. La persistencia segura de credenciales y
 > las integraciones reales por plataforma se irán añadiendo una a una.
+>
+> **Google Ads** ya está integrado de extremo a extremo: un workflow de n8n
+> hace ingesta diaria vía GAQL a la tabla `gads_campaign_daily` de Supabase, y
+> la función `/api/paid` la lee y agrega en la forma de `PaidData`. Solo falta
+> definir en Vercel `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` y
+> `DASHBOARD_CLIENT_ID`, y poner `VITE_DATA_MODE=live` para verlo en Paid
+> Media. Meta Ads y TikTok Ads seguirán el mismo patrón (tabla propia +
+> workflow de n8n + endpoint `/api/*`).
 
 ## Visibilidad de fuentes
 
