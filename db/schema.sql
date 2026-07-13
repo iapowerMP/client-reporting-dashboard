@@ -14,13 +14,14 @@ create extension if not exists "pgcrypto";
 --  Clientes
 -- ----------------------------------------------------------------------------
 create table if not exists clients (
-  id          uuid primary key default gen_random_uuid(),
-  name        text not null,
-  slug        text not null unique, -- identifica al cliente en la URL: /c/<slug>/...
-  sector      text,
-  website     text,
-  logo_url    text,
-  created_at  timestamptz not null default now()
+  id                   uuid primary key default gen_random_uuid(),
+  name                 text not null,
+  slug                 text not null unique, -- identifica al cliente en la URL: /c/<slug>/...
+  sector               text,
+  website              text,
+  logo_url             text,
+  access_password_hash text,  -- "salt:hash" (scrypt); null = informe sin contraseña
+  created_at           timestamptz not null default now()
 );
 
 -- Bucket público para los logos de cliente (sube /api/upload-logo con la

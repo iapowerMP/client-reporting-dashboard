@@ -13,18 +13,39 @@
  *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  */
 
-async function resolveClientId(
+import { timingSafeEqual, createHmac } from 'crypto'
+
+async function resolveClient(
   supabaseUrl: string,
   serviceRoleKey: string,
   slug: string,
-): Promise<string | null> {
-  const url = `${supabaseUrl}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id`
+): Promise<{ id: string; access_password_hash: string | null } | null> {
+  const url = `${supabaseUrl}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,access_password_hash`
   const resp = await fetch(url, {
     headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
   })
   if (!resp.ok) return null
-  const rows = (await resp.json()) as Array<{ id: string }>
-  return rows[0]?.id ?? null
+  const rows = (await resp.json()) as Array<{ id: string; access_password_hash: string | null }>
+  return rows[0] ?? null
+}
+
+function verifyToken(token: string, subject: string, secret: string): boolean {
+  const [expiryStr, sig] = token.split('.')
+  const expiry = Number(expiryStr)
+  if (!expiry || !sig || Date.now() > expiry) return false
+  const expected = createHmac('sha256', secret).update(`${subject}:${expiry}`).digest('hex')
+  const a = Buffer.from(sig, 'hex')
+  const b = Buffer.from(expected, 'hex')
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
+function checkAccess(req: any, client: { access_password_hash: string | null }, slug: string): boolean {
+  if (!client.access_password_hash) return true
+  const authHeader = req.headers?.authorization ?? ''
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+  const secret = process.env.AUTH_TOKEN_SECRET
+  return !!secret && !!token && verifyToken(token, slug, secret)
 }
 
 interface GadsRow {
@@ -70,20 +91,24 @@ async function handleRequest(req: any, res: any) {
     return
   }
 
-  let clientId: string | null
+  let client: { id: string; access_password_hash: string | null } | null
   try {
-    clientId = await resolveClientId(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+    client = await resolveClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
   } catch (e) {
     res.status(502).json({ error: `No se pudo resolver el cliente: ${(e as Error).message}` })
     return
   }
-  if (!clientId) {
+  if (!client) {
     res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+    return
+  }
+  if (!checkAccess(req, client, slug)) {
+    res.status(401).json({ error: 'Este informe está protegido con contraseña. Vuelve a introducirla.' })
     return
   }
 
   const query = new URLSearchParams({
-    client_id: `eq.${clientId}`,
+    client_id: `eq.${client.id}`,
     order: 'date.asc',
   })
 
