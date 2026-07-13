@@ -19,6 +19,7 @@ import type {
   SettingsData,
 } from './types'
 import { mockProvider } from './mockProvider'
+import { authHeaders, clearToken } from '@/lib/authToken'
 
 class EndpointNotImplemented extends Error {}
 
@@ -26,7 +27,7 @@ async function fetchJson<T>(endpoint: string, client: string): Promise<T> {
   const url = `${endpoint}?client=${encodeURIComponent(client)}`
   let res: Response
   try {
-    res = await fetch(url, { headers: { Accept: 'application/json' } })
+    res = await fetch(url, { headers: { Accept: 'application/json', ...authHeaders(client) } })
   } catch {
     throw new Error(
       `No se pudo conectar con ${endpoint}. ¿Está desplegada la función de servidor?`,
@@ -34,6 +35,13 @@ async function fetchJson<T>(endpoint: string, client: string): Promise<T> {
   }
   if (res.status === 404) {
     throw new EndpointNotImplemented()
+  }
+  if (res.status === 401) {
+    // El informe está protegido y el token guardado ya no es válido: se
+    // recarga para que ClientLayout vuelva a pedir la contraseña.
+    clearToken(client)
+    window.location.reload()
+    throw new Error('Este informe está protegido con contraseña. Vuelve a introducirla.')
   }
   if (!res.ok) {
     let detail = ''

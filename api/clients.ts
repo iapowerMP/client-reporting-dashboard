@@ -7,12 +7,32 @@
  * POST { name, sector?, website? } -> crea un cliente nuevo, generando un
  *         slug único a partir del nombre, y lo devuelve. Ese slug es el que
  *         identifica al cliente en la URL (/c/<slug>/...).
- * PATCH { client, name?, sector?, website?, logoUrl? } -> actualiza los datos
- *         del cliente (identificado por su slug actual). Si cambia el nombre,
- *         el slug (y por tanto la URL /c/<slug>/...) se regenera a partir del
- *         nuevo nombre — un enlace guardado con el nombre anterior deja de
- *         funcionar. El PATCH devuelve el cliente con su slug final.
+ * PATCH { client, name?, sector?, website?, logoUrl?, password?, removePassword? }
+ *         -> actualiza los datos del cliente (identificado por su slug actual).
+ *         Si cambia el nombre, el slug (y por tanto la URL /c/<slug>/...) se
+ *         regenera a partir del nuevo nombre. Si el cliente ya tiene
+ *         contraseña activada, el PATCH exige el token de sesión (Authorization:
+ *         Bearer <token>, emitido por /api/verify-access) para poder aplicar
+ *         cualquier cambio, incluida la propia contraseña.
  */
+import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'crypto'
+
+function hashPassword(password: string): string {
+  const salt = randomBytes(16).toString('hex')
+  const hash = scryptSync(password, salt, 64).toString('hex')
+  return `${salt}:${hash}`
+}
+
+function verifyToken(token: string, subject: string, secret: string): boolean {
+  const [expiryStr, sig] = token.split('.')
+  const expiry = Number(expiryStr)
+  if (!expiry || !sig || Date.now() > expiry) return false
+  const expected = createHmac('sha256', secret).update(`${subject}:${expiry}`).digest('hex')
+  const a = Buffer.from(sig, 'hex')
+  const b = Buffer.from(expected, 'hex')
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
 
 function slugify(name: string): string {
   return name
@@ -52,7 +72,7 @@ async function handleRequest(req: any, res: any) {
 
     if (slug) {
       try {
-        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url`
+        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash`
         const resp = await fetch(url, { headers })
         if (!resp.ok) {
           res.status(502).json({ error: `Supabase respondió ${resp.status} al leer clients.` })
@@ -63,7 +83,8 @@ async function handleRequest(req: any, res: any) {
           res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
           return
         }
-        res.status(200).json({ client: row })
+        const { access_password_hash, ...publicRow } = row
+        res.status(200).json({ client: { ...publicRow, hasPassword: !!access_password_hash } })
       } catch {
         res.status(502).json({ error: 'No se pudo leer clients desde Supabase.' })
       }
@@ -124,7 +145,7 @@ async function handleRequest(req: any, res: any) {
   }
 
   if (req.method === 'PATCH') {
-    const { client: slug, name, sector, website, logoUrl } = req.body ?? {}
+    const { client: slug, name, sector, website, logoUrl, password, removePassword } = req.body ?? {}
     if (!slug || typeof slug !== 'string') {
       res.status(400).json({ error: 'Falta el campo client (slug del cliente).' })
       return
@@ -135,6 +156,11 @@ async function handleRequest(req: any, res: any) {
     if (typeof sector === 'string') updates.sector = sector.trim() || null
     if (typeof website === 'string') updates.website = website.trim() || null
     if (typeof logoUrl === 'string') updates.logo_url = logoUrl.trim() || null
+    if (typeof password === 'string' && password.trim()) {
+      updates.access_password_hash = hashPassword(password.trim())
+    } else if (removePassword === true) {
+      updates.access_password_hash = null
+    }
 
     if (Object.keys(updates).length === 0) {
       res.status(400).json({ error: 'No hay ningún campo que actualizar.' })
@@ -142,6 +168,31 @@ async function handleRequest(req: any, res: any) {
     }
 
     try {
+      // Si el cliente ya tiene contraseña activada, cualquier cambio (incluida
+      // la propia contraseña) exige un token de sesión válido para ese slug.
+      const currentResp = await fetch(
+        `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=access_password_hash`,
+        { headers },
+      )
+      if (!currentResp.ok) {
+        res.status(502).json({ error: `Supabase respondió ${currentResp.status} al leer el cliente.` })
+        return
+      }
+      const [currentRow] = await currentResp.json()
+      if (!currentRow) {
+        res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+        return
+      }
+      if (currentRow.access_password_hash) {
+        const authHeader = req.headers?.authorization ?? ''
+        const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+        const secret = process.env.AUTH_TOKEN_SECRET
+        if (!secret || !token || !verifyToken(token, slug, secret)) {
+          res.status(401).json({ error: 'Este informe está protegido con contraseña. Vuelve a introducirla.' })
+          return
+        }
+      }
+
       // Si cambia el nombre, la URL (slug) le sigue, para que el enlace del
       // informe siempre refleje el nombre actual del cliente.
       if (typeof updates.name === 'string') {
@@ -180,7 +231,8 @@ async function handleRequest(req: any, res: any) {
         res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
         return
       }
-      res.status(200).json({ client: row })
+      const { access_password_hash, ...publicRow } = row
+      res.status(200).json({ client: { ...publicRow, hasPassword: !!access_password_hash } })
     } catch {
       res.status(502).json({ error: 'No se pudo actualizar el cliente en Supabase.' })
     }

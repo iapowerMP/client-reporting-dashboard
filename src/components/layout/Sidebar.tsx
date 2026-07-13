@@ -112,23 +112,23 @@ export default function Sidebar({ clientSlug, clientName, logoUrl, open, onClose
           ))}
         </nav>
 
-        {/* Pie: cuenta activa */}
+        {/* Pie: acceso directo a la configuración del informe */}
         <div className="border-t border-border p-4">
-          <div className="flex items-center gap-3">
-            {logoUrl ? (
-              <img src={logoUrl} alt={displayName} className="h-9 w-9 rounded-full object-cover" />
-            ) : (
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-bold uppercase text-white">
-                {displayName.slice(0, 2)}
-              </div>
-            )}
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold capitalize text-white">
-                {displayName}
-              </p>
-              <p className="truncate text-xs text-text-secondary">/c/{clientSlug}</p>
-            </div>
-          </div>
+          <NavLink
+            to={`${base}/settings`}
+            onClick={onClose}
+            className={({ isActive }) =>
+              cn(
+                'flex items-center gap-2 rounded-control px-3 py-2.5 text-sm font-medium transition-colors',
+                isActive
+                  ? 'bg-accent/10 text-white'
+                  : 'text-text-secondary hover:bg-white/5 hover:text-white',
+              )
+            }
+          >
+            <Settings className="h-[18px] w-[18px] shrink-0" />
+            Configuración del informe
+          </NavLink>
         </div>
       </aside>
     </>

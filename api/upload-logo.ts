@@ -3,7 +3,22 @@
  * Body: { client: slug, filename: string, dataUrl: string }  (dataUrl = "data:<mime>;base64,<...>")
  * Sube el archivo al bucket público "logos" de Supabase Storage y guarda su
  * URL pública en clients.logo_url. Devuelve { logoUrl }.
+ *
+ * Si el cliente tiene contraseña activada, exige el token de sesión
+ * (Authorization: Bearer <token>, emitido por /api/verify-access).
  */
+import { timingSafeEqual, createHmac } from 'crypto'
+
+function verifyToken(token: string, subject: string, secret: string): boolean {
+  const [expiryStr, sig] = token.split('.')
+  const expiry = Number(expiryStr)
+  if (!expiry || !sig || Date.now() > expiry) return false
+  const expected = createHmac('sha256', secret).update(`${subject}:${expiry}`).digest('hex')
+  const a = Buffer.from(sig, 'hex')
+  const b = Buffer.from(expected, 'hex')
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
 
 export default async function handler(req: any, res: any) {
   try {
@@ -31,6 +46,29 @@ async function handleRequest(req: any, res: any) {
   if (!slug || !filename || !dataUrl) {
     res.status(400).json({ error: 'Faltan campos: client, filename y dataUrl son obligatorios.' })
     return
+  }
+
+  const clientResp = await fetch(
+    `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=access_password_hash`,
+    { headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } },
+  )
+  if (!clientResp.ok) {
+    res.status(502).json({ error: `Supabase respondió ${clientResp.status} al leer el cliente.` })
+    return
+  }
+  const [clientRow] = (await clientResp.json()) as Array<{ access_password_hash: string | null }>
+  if (!clientRow) {
+    res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+    return
+  }
+  if (clientRow.access_password_hash) {
+    const authHeader = req.headers?.authorization ?? ''
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+    const secret = process.env.AUTH_TOKEN_SECRET
+    if (!secret || !token || !verifyToken(token, slug, secret)) {
+      res.status(401).json({ error: 'Este informe está protegido con contraseña. Vuelve a introducirla.' })
+      return
+    }
   }
 
   const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl)

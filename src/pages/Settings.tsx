@@ -11,6 +11,7 @@ import { type Connection, type SyncLog } from '@/data/mockData'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
 import { type useClientInfo } from '@/lib/useClientInfo'
+import { authHeaders } from '@/lib/authToken'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024
@@ -204,7 +205,7 @@ export default function Settings() {
     try {
       const resp = await fetch('/api/data-sources', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
         body: JSON.stringify({ client: clientSlug, platform, externalId }),
       })
       if (!resp.ok) throw new Error()
@@ -226,7 +227,7 @@ export default function Settings() {
     try {
       const resp = await fetch('/api/clients', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
         body: JSON.stringify({
           client: clientSlug,
           name: clientNameRef.current?.value ?? '',
@@ -264,7 +265,7 @@ export default function Settings() {
       const dataUrl = await readFileAsDataUrl(file)
       const resp = await fetch('/api/upload-logo', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
         body: JSON.stringify({ client: clientSlug, filename: file.name, dataUrl }),
       })
       if (!resp.ok) throw new Error()
@@ -274,6 +275,47 @@ export default function Settings() {
       showToast('No se pudo subir el logo. Revisa la configuración del servidor (Supabase).')
     } finally {
       setUploadingLogo(false)
+    }
+  }
+
+  const [passwordValue, setPasswordValue] = useState('')
+  const [savingPassword, setSavingPassword] = useState(false)
+
+  const handleSetPassword = async () => {
+    if (!passwordValue.trim()) return
+    setSavingPassword(true)
+    try {
+      const resp = await fetch('/api/clients', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        body: JSON.stringify({ client: clientSlug, password: passwordValue.trim() }),
+      })
+      if (!resp.ok) throw new Error()
+      setPasswordValue('')
+      await clientInfo.refetch()
+      showToast('Contraseña activada')
+    } catch {
+      showToast('No se pudo guardar la contraseña.')
+    } finally {
+      setSavingPassword(false)
+    }
+  }
+
+  const handleRemovePassword = async () => {
+    setSavingPassword(true)
+    try {
+      const resp = await fetch('/api/clients', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        body: JSON.stringify({ client: clientSlug, removePassword: true }),
+      })
+      if (!resp.ok) throw new Error()
+      await clientInfo.refetch()
+      showToast('Contraseña desactivada')
+    } catch {
+      showToast('No se pudo quitar la contraseña.')
+    } finally {
+      setSavingPassword(false)
     }
   }
 
@@ -347,6 +389,42 @@ export default function Settings() {
           >
             {savingClient ? 'Guardando...' : 'Guardar cambios'}
           </button>
+        </div>
+      </ChartCard>
+
+      {/* Seguridad del informe */}
+      <ChartCard title="Seguridad del informe">
+        <p className="mb-3 text-sm text-text-secondary">
+          {clientData?.hasPassword
+            ? 'Este informe está protegido con contraseña. Solo quien la conozca puede verlo.'
+            : 'Este informe es visible para cualquiera que tenga el enlace. Añade una contraseña para restringir el acceso.'}
+        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <input
+            type="password"
+            value={passwordValue}
+            onChange={(e) => setPasswordValue(e.target.value)}
+            placeholder={clientData?.hasPassword ? 'Nueva contraseña' : 'Establecer contraseña'}
+            className="w-full max-w-xs rounded-control border border-border bg-base px-3 py-2 text-sm text-white placeholder:text-text-secondary/60 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleSetPassword}
+              disabled={savingPassword || !passwordValue.trim()}
+              className="rounded-control border border-border bg-base px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
+            >
+              {clientData?.hasPassword ? 'Cambiar contraseña' : 'Activar contraseña'}
+            </button>
+            {clientData?.hasPassword && (
+              <button
+                onClick={handleRemovePassword}
+                disabled={savingPassword}
+                className="rounded-control border border-border bg-base px-4 py-2 text-sm font-medium text-negative transition-colors hover:bg-negative/10 disabled:opacity-60"
+              >
+                Quitar contraseña
+              </button>
+            )}
+          </div>
         </div>
       </ChartCard>
 

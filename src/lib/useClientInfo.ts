@@ -9,6 +9,7 @@ export interface ClientInfo {
   sector: string | null
   website: string | null
   logoUrl: string | null
+  hasPassword: boolean
 }
 
 interface ClientInfoState {
@@ -42,6 +43,7 @@ export function useClientInfo(clientSlug: string) {
           sector: row.sector,
           website: row.website,
           logoUrl: row.logo_url,
+          hasPassword: !!row.hasPassword,
         },
         loading: false,
         error: null,

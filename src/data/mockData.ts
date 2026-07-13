@@ -243,7 +243,7 @@ const PAID_KPI_META = [
   { label: 'Inversión', delta: '▲ 8,2%', deltaPositive: true },
   { label: 'Impresiones', delta: '▲ 5,1%', deltaPositive: true },
   { label: 'Clics', delta: '▲ 11,3%', deltaPositive: true },
-  { label: 'CTR', delta: '▲ 0,15pp', deltaPositive: true },
+  { label: 'CTR', delta: '▲ 0,15%', deltaPositive: true },
   { label: 'CPC', delta: '▼ 3,2%', deltaPositive: true },
   { label: 'CPM', delta: '▲ 2,1%', deltaPositive: false },
   { label: 'Conversiones', delta: '▲ 15,8%', deltaPositive: true },
