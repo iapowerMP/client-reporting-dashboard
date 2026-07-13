@@ -109,11 +109,15 @@ async function handleRequest(req: any, res: any) {
   }
 
   if (req.method === 'POST') {
-    const { client: slug, platform, externalId } = req.body ?? {}
-    if (!slug || !platform || typeof externalId !== 'string') {
+    const { client: slug, platform, externalId: rawExternalId } = req.body ?? {}
+    if (!slug || !platform || typeof rawExternalId !== 'string') {
       res.status(400).json({ error: 'Faltan campos: client, platform y externalId son obligatorios.' })
       return
     }
+    // El Customer ID de Google Ads se muestra con guiones (XXX-XXX-XXXX) pero
+    // la API solo acepta dígitos: se normaliza aquí para que el guardado sea
+    // siempre válido independientemente de cómo lo escriba el usuario.
+    const externalId = platform === 'google-ads' ? rawExternalId.replace(/\D/g, '') : rawExternalId
     let client: { id: string; access_password_hash: string | null } | null
     try {
       client = await resolveClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
