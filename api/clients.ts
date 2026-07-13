@@ -8,8 +8,10 @@
  *         slug único a partir del nombre, y lo devuelve. Ese slug es el que
  *         identifica al cliente en la URL (/c/<slug>/...).
  * PATCH { client, name?, sector?, website?, logoUrl? } -> actualiza los datos
- *         del cliente (identificado por su slug actual). El slug nunca
- *         cambia aquí, para no romper la URL ya compartida/guardada en favoritos.
+ *         del cliente (identificado por su slug actual). Si cambia el nombre,
+ *         el slug (y por tanto la URL /c/<slug>/...) se regenera a partir del
+ *         nuevo nombre — un enlace guardado con el nombre anterior deja de
+ *         funcionar. El PATCH devuelve el cliente con su slug final.
  */
 
 function slugify(name: string): string {
@@ -140,6 +142,29 @@ async function handleRequest(req: any, res: any) {
     }
 
     try {
+      // Si cambia el nombre, la URL (slug) le sigue, para que el enlace del
+      // informe siempre refleje el nombre actual del cliente.
+      if (typeof updates.name === 'string') {
+        const newBase = slugify(updates.name) || 'cliente'
+        if (newBase !== slug) {
+          let candidate = newBase
+          for (let attempt = 0; attempt < 20; attempt++) {
+            const checkResp = await fetch(
+              `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(candidate)}&select=id`,
+              { headers },
+            )
+            if (!checkResp.ok) {
+              res.status(502).json({ error: `Supabase respondió ${checkResp.status} al comprobar el slug.` })
+              return
+            }
+            const existing = await checkResp.json()
+            if (existing.length === 0) break
+            candidate = `${newBase}-${attempt + 2}`
+          }
+          updates.slug = candidate
+        }
+      }
+
       const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}`
       const resp = await fetch(url, {
         method: 'PATCH',
