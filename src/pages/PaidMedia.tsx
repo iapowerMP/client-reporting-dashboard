@@ -39,7 +39,29 @@ import {
 import { useReportConfig } from '@/lib/reportConfig'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
+import { useDateRange } from '@/lib/dateRange'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
+
+type TopMetric = 'inversion' | 'impresiones' | 'clics' | 'conversiones' | 'roas'
+
+const TOP_METRIC_OPTIONS: { key: TopMetric; label: string }[] = [
+  { key: 'inversion', label: 'Inversión' },
+  { key: 'impresiones', label: 'Impresiones' },
+  { key: 'clics', label: 'Clics' },
+  { key: 'conversiones', label: 'Conversiones' },
+  { key: 'roas', label: 'ROAS' },
+]
+
+function formatTopValue(metric: TopMetric, value: number): string {
+  switch (metric) {
+    case 'inversion':
+      return formatCurrency(value)
+    case 'roas':
+      return formatRoas(value, 1)
+    default:
+      return formatNumber(value)
+  }
+}
 
 const campaignColumns: Column<Campaign>[] = [
   {
@@ -109,10 +131,12 @@ const campaignColumns: Column<Campaign>[] = [
 export default function PaidMedia() {
   const { clientSlug = '' } = useParams()
   const { isVisible } = useReportConfig()
+  const { range, label: rangeLabel } = useDateRange()
   const [tab, setTab] = useState<PaidTab>('Todas')
+  const [topMetric, setTopMetric] = useState<TopMetric>('roas')
   const { data, loading, error } = useAsyncData(
-    () => getProvider().getPaid(clientSlug),
-    [clientSlug],
+    () => getProvider().getPaid(clientSlug, range),
+    [clientSlug, range.from, range.to],
   )
 
   // Solo se muestran las plataformas activadas en Configuración.
@@ -140,6 +164,12 @@ export default function PaidMedia() {
     visibleDistribution.reduce((s, d) => s + d.value, 0),
   )
 
+  const topMetricLabel = TOP_METRIC_OPTIONS.find((o) => o.key === topMetric)?.label ?? 'ROAS'
+  const topN = [...rows]
+    .sort((a, b) => b[topMetric] - a[topMetric])
+    .slice(0, 5)
+    .map((c) => ({ name: c.name, value: c[topMetric] }))
+
   return (
     <div className="space-y-6">
       {/* Tabs de plataforma */}
@@ -153,7 +183,7 @@ export default function PaidMedia() {
       </div>
 
       {/* Gráfico 1: Inversión vs Conversiones */}
-      <ChartCard title="Inversión vs Conversiones — Últimos 30 días">
+      <ChartCard title={`Inversión vs Conversiones — ${rangeLabel}`}>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
@@ -277,12 +307,27 @@ export default function PaidMedia() {
           </div>
         </ChartCard>
 
-        {/* Gráfico 3: Top 5 campañas por ROAS (barras horizontales) */}
-        <ChartCard title="Top 5 campañas por ROAS">
+        {/* Gráfico 3: Top 5 campañas por métrica seleccionable (barras horizontales) */}
+        <ChartCard
+          title={`Top 5 campañas por ${topMetricLabel}`}
+          action={
+            <select
+              value={topMetric}
+              onChange={(e) => setTopMetric(e.target.value as TopMetric)}
+              className="rounded-control border border-border bg-base px-2 py-1 text-xs font-medium text-text-primary focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
+            >
+              {TOP_METRIC_OPTIONS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          }
+        >
           <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
-                data={data.topRoas}
+                data={topN}
                 layout="vertical"
                 margin={{ top: 8, right: 24, left: 8, bottom: 0 }}
               >
@@ -297,7 +342,7 @@ export default function PaidMedia() {
                   fontSize={11}
                   tickLine={false}
                   axisLine={{ stroke: '#2A2D36' }}
-                  tickFormatter={(v) => `${formatNumber(v as number)}x`}
+                  tickFormatter={(v) => formatTopValue(topMetric, v as number)}
                 />
                 <YAxis
                   type="category"
@@ -309,10 +354,10 @@ export default function PaidMedia() {
                   width={130}
                 />
                 <Tooltip
-                  content={<ChartTooltip formatter={(v) => formatRoas(v, 1)} />}
+                  content={<ChartTooltip formatter={(v) => formatTopValue(topMetric, v as number)} />}
                   cursor={{ fill: '#ffffff08' }}
                 />
-                <Bar dataKey="roas" name="ROAS" fill="#F2FE54" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="value" name={topMetricLabel} fill="#F2FE54" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -17,6 +17,7 @@ import StatusBadge from '@/components/shared/StatusBadge'
 import { cn, formatCompact, formatNumber } from '@/lib/utils'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
+import { useDateRange } from '@/lib/dateRange'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 import { type SummaryCard, type AlertRow } from '@/data/mockData'
 
@@ -84,9 +85,10 @@ const activityColumns: Column<AlertRow>[] = [
 
 export default function Overview() {
   const { clientSlug = '' } = useParams()
+  const { range } = useDateRange()
   const { data, loading, error } = useAsyncData(
-    () => getProvider().getOverview(clientSlug),
-    [clientSlug],
+    () => getProvider().getOverview(clientSlug, range),
+    [clientSlug, range.from, range.to],
   )
 
   if (loading) return <Loading />

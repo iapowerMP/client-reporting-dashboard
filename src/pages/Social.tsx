@@ -33,6 +33,7 @@ import {
 import { useReportConfig } from '@/lib/reportConfig'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
+import { useDateRange } from '@/lib/dateRange'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 
 function PostCard({ post }: { post: Post }) {
@@ -76,9 +77,10 @@ export default function Social() {
   const { clientSlug = '' } = useParams()
   const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<SocialTab>('Todas')
+  const { range } = useDateRange()
   const { data, loading, error } = useAsyncData(
-    () => getProvider().getSocial(clientSlug),
-    [clientSlug],
+    () => getProvider().getSocial(clientSlug, range),
+    [clientSlug, range.from, range.to],
   )
 
   // Solo se muestran las redes activadas en Configuración.

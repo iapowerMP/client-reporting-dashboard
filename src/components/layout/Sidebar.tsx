@@ -21,7 +21,6 @@ const NAV_ITEMS: NavItem[] = [
   { suffix: '/paid', label: 'Paid Media', icon: DollarSign },
   { suffix: '/seo', label: 'SEO', icon: Search },
   { suffix: '/social', label: 'Redes Sociales', icon: Smartphone },
-  { suffix: '/settings', label: 'Configuración', icon: Settings },
 ]
 
 interface SidebarProps {
@@ -112,14 +111,16 @@ export default function Sidebar({ clientSlug, clientName, logoUrl, open, onClose
           ))}
         </nav>
 
-        {/* Pie: acceso directo a la configuración del informe */}
+        {/* Pie: acceso directo a la configuración del informe (solo icono) */}
         <div className="border-t border-border p-4">
           <NavLink
             to={`${base}/settings`}
             onClick={onClose}
+            aria-label="Configuración del informe"
+            title="Configuración del informe"
             className={({ isActive }) =>
               cn(
-                'flex items-center gap-2 rounded-control px-3 py-2.5 text-sm font-medium transition-colors',
+                'flex h-9 w-9 items-center justify-center rounded-control transition-colors',
                 isActive
                   ? 'bg-accent/10 text-white'
                   : 'text-text-secondary hover:bg-white/5 hover:text-white',
@@ -127,7 +128,6 @@ export default function Sidebar({ clientSlug, clientName, logoUrl, open, onClose
             }
           >
             <Settings className="h-[18px] w-[18px] shrink-0" />
-            Configuración del informe
           </NavLink>
         </div>
       </aside>

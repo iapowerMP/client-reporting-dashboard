@@ -28,6 +28,7 @@ import {
 import { useReportConfig } from '@/lib/reportConfig'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
+import { useDateRange } from '@/lib/dateRange'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 
 const gscColumns = (firstHeader: string): Column<GscRow>[] => [
@@ -66,9 +67,10 @@ export default function Seo() {
   const { clientSlug = '' } = useParams()
   const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<SeoTab>('Overview')
+  const { range } = useDateRange()
   const { data, loading, error } = useAsyncData(
-    () => getProvider().getSeo(clientSlug),
-    [clientSlug],
+    () => getProvider().getSeo(clientSlug, range),
+    [clientSlug, range.from, range.to],
   )
 
   // "Overview" siempre visible; el resto de herramientas según Configuración.
