@@ -214,13 +214,7 @@ async function handleRequest(req: any, res: any) {
       .slice(0, 5)
       .map((c) => ({ name: c.name, roas: c.roas }))
 
-    res.status(200).json({
-      campaigns,
-      invConv,
-      distribution,
-      topRoas,
-      _debug: { currentCustomerId, rowsRead: rows.length, distinctCampaignIds: byCampaign.size },
-    })
+    res.status(200).json({ campaigns, invConv, distribution, topRoas })
   } catch {
     res.status(502).json({ error: 'No se pudo leer Google Ads desde Supabase.' })
   }
