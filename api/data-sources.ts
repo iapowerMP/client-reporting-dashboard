@@ -34,7 +34,13 @@ export default async function handler(req: any, res: any) {
       res.status(400).json({ error: 'Falta el parámetro client en la petición.' })
       return
     }
-    const clientId = await resolveClientId(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+    let clientId: string | null
+    try {
+      clientId = await resolveClientId(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+    } catch (e) {
+      res.status(502).json({ error: `No se pudo resolver el cliente: ${(e as Error).message}` })
+      return
+    }
     if (!clientId) {
       res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
       return
@@ -59,7 +65,13 @@ export default async function handler(req: any, res: any) {
       res.status(400).json({ error: 'Faltan campos: client, platform y externalId son obligatorios.' })
       return
     }
-    const clientId = await resolveClientId(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+    let clientId: string | null
+    try {
+      clientId = await resolveClientId(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+    } catch (e) {
+      res.status(502).json({ error: `No se pudo resolver el cliente: ${(e as Error).message}` })
+      return
+    }
     if (!clientId) {
       res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
       return

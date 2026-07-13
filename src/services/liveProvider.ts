@@ -36,8 +36,15 @@ async function fetchJson<T>(endpoint: string, client: string): Promise<T> {
     throw new EndpointNotImplemented()
   }
   if (!res.ok) {
+    let detail = ''
+    try {
+      const body = await res.json()
+      if (typeof body?.error === 'string') detail = body.error
+    } catch {
+      /* la respuesta no era JSON; nos quedamos sin detalle */
+    }
     throw new Error(
-      `El endpoint ${endpoint} respondió ${res.status}. Revisa las credenciales de la fuente en Configuración.`,
+      `El endpoint ${endpoint} respondió ${res.status}${detail ? `: ${detail}` : '.'}`,
     )
   }
   return (await res.json()) as T
