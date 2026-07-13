@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useParams } from 'react-router-dom'
 import {
   ResponsiveContainer,
   LineChart,
@@ -72,9 +73,13 @@ function PostCard({ post }: { post: Post }) {
 }
 
 export default function Social() {
+  const { clientSlug = '' } = useParams()
   const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<SocialTab>('Todas')
-  const { data, loading, error } = useAsyncData(() => getProvider().getSocial())
+  const { data, loading, error } = useAsyncData(
+    () => getProvider().getSocial(clientSlug),
+    [clientSlug],
+  )
 
   // Solo se muestran las redes activadas en Configuración.
   const platformTabs = SOCIAL_PLATFORMS.filter((p) =>

@@ -17,10 +17,11 @@ import type {
   SettingsData,
 } from './types'
 
-async function fetchJson<T>(endpoint: string): Promise<T> {
+async function fetchJson<T>(endpoint: string, client: string): Promise<T> {
+  const url = `${endpoint}?client=${encodeURIComponent(client)}`
   let res: Response
   try {
-    res = await fetch(endpoint, { headers: { Accept: 'application/json' } })
+    res = await fetch(url, { headers: { Accept: 'application/json' } })
   } catch {
     throw new Error(
       `No se pudo conectar con ${endpoint}. ¿Está desplegada la función de servidor?`,
@@ -36,9 +37,9 @@ async function fetchJson<T>(endpoint: string): Promise<T> {
 
 export const liveProvider: DataProvider = {
   mode: 'live',
-  getOverview: () => fetchJson<OverviewData>('/api/overview'),
-  getPaid: () => fetchJson<PaidData>('/api/paid'),
-  getSeo: () => fetchJson<SeoData>('/api/seo'),
-  getSocial: () => fetchJson<SocialData>('/api/social'),
-  getSettings: () => fetchJson<SettingsData>('/api/settings'),
+  getOverview: (client) => fetchJson<OverviewData>('/api/overview', client),
+  getPaid: (client) => fetchJson<PaidData>('/api/paid', client),
+  getSeo: (client) => fetchJson<SeoData>('/api/seo', client),
+  getSocial: (client) => fetchJson<SocialData>('/api/social', client),
+  getSettings: (client) => fetchJson<SettingsData>('/api/settings', client),
 }

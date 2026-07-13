@@ -1,23 +1,23 @@
 /**
  * Vercel Function: /api/data-sources
- * GET  -> devuelve las fuentes de datos (plataforma + external_id) del cliente
- *         de este deployment, para precargar los campos en Configuración.
- * POST -> guarda/actualiza el identificador de cuenta de una plataforma
- *         (p. ej. el Customer ID de Google Ads) para ese mismo cliente.
- *         Body: { platform: string, externalId: string }
+ * GET  ?client=<slug>            -> fuentes de datos (plataforma + external_id)
+ *                                    de ese cliente, para precargar Configuración.
+ * POST { client, platform, externalId } -> guarda/actualiza el identificador de
+ *         cuenta de una plataforma (p. ej. el Customer ID de Google Ads) para
+ *         ese cliente.
  *
- * El client_id de este dashboard vive en el servidor (DASHBOARD_CLIENT_ID) y
- * nunca lo envía el navegador: cada copia del proyecto solo puede leer/editar
- * los datos de su propio cliente.
+ * El deployment es compartido por todos los clientes: el cliente se resuelve
+ * en cada petición a partir del slug (columna `clients.slug`), no de una
+ * variable de entorno fija.
  */
+import { resolveClientId } from './_lib/resolveClient'
 
 export default async function handler(req: any, res: any) {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DASHBOARD_CLIENT_ID } = process.env
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env
 
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !DASHBOARD_CLIENT_ID) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     res.status(500).json({
-      error:
-        'Faltan variables de entorno en el servidor (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DASHBOARD_CLIENT_ID).',
+      error: 'Faltan variables de entorno en el servidor (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).',
     })
     return
   }
@@ -29,8 +29,18 @@ export default async function handler(req: any, res: any) {
   }
 
   if (req.method === 'GET') {
+    const slug = typeof req.query?.client === 'string' ? req.query.client : ''
+    if (!slug) {
+      res.status(400).json({ error: 'Falta el parámetro client en la petición.' })
+      return
+    }
+    const clientId = await resolveClientId(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+    if (!clientId) {
+      res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+      return
+    }
     try {
-      const url = `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${DASHBOARD_CLIENT_ID}&select=platform,external_id,status,last_sync`
+      const url = `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${clientId}&select=platform,external_id,status,last_sync`
       const resp = await fetch(url, { headers })
       if (!resp.ok) {
         res.status(502).json({ error: `Supabase respondió ${resp.status} al leer data_sources.` })
@@ -44,9 +54,14 @@ export default async function handler(req: any, res: any) {
   }
 
   if (req.method === 'POST') {
-    const { platform, externalId } = req.body ?? {}
-    if (!platform || typeof externalId !== 'string') {
-      res.status(400).json({ error: 'Faltan campos: platform y externalId son obligatorios.' })
+    const { client: slug, platform, externalId } = req.body ?? {}
+    if (!slug || !platform || typeof externalId !== 'string') {
+      res.status(400).json({ error: 'Faltan campos: client, platform y externalId son obligatorios.' })
+      return
+    }
+    const clientId = await resolveClientId(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+    if (!clientId) {
+      res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
       return
     }
     try {
@@ -55,7 +70,7 @@ export default async function handler(req: any, res: any) {
         method: 'POST',
         headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=representation' },
         body: JSON.stringify([
-          { client_id: DASHBOARD_CLIENT_ID, platform, external_id: externalId, status: 'conectado' },
+          { client_id: clientId, platform, external_id: externalId, status: 'conectado' },
         ]),
       })
       if (!resp.ok) {

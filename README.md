@@ -18,14 +18,35 @@ npm run preview  # previsualizar el build
 ```
 src/
   components/
-    layout/    Sidebar, TopBar, Layout
+    layout/    Sidebar, TopBar, Layout, ClientLayout
     shared/    KpiCard, ChartCard, DataTable, PlatformBadge, StatusBadge,
                Tabs, Toggle, ChartTooltip, AsyncState (Loading/ErrorState)
-  pages/       Overview, PaidMedia, Seo, Social, Settings
+  pages/       ClientPicker, Overview, PaidMedia, Seo, Social, Settings
   data/        mockData.ts  (datos ficticios, tipados)
   lib/         utils.ts (formatters ES), reportConfig.tsx, useAsyncData.ts
   services/    capa de datos conmutable (mock ↔ real)
+api/           Vercel Functions: clients, data-sources, paid, overview...
 ```
+
+## Multi-cliente: un deployment, muchos informes
+
+El dashboard es **multi-cliente en un único deployment**: no hace falta
+duplicar el proyecto en Vercel para cada cliente. Cada cliente tiene su
+propio informe en una URL fija, `/c/<slug>/...` (p. ej. `/c/acme-corp/paid`),
+que un project manager puede guardar en favoritos y usar siempre sin volver a
+configurar nada — el identificador va en la URL, no en variables de entorno,
+así que dos personas pueden trabajar en clientes distintos a la vez sin
+pisarse.
+
+- **`/`** — pantalla para elegir un cliente existente o crear uno nuevo
+  (`ClientPicker`, vía `/api/clients`). Al crear un cliente se genera un
+  `slug` único a partir de su nombre y se navega directamente a su informe.
+- **`/c/:clientSlug/*`** — el dashboard de ese cliente (Overview, Paid Media,
+  SEO, Redes Sociales, Configuración). El slug se resuelve en cada endpoint
+  `/api/*` contra la tabla `clients` de Supabase.
+- La preferencia de visibilidad de fuentes (`localStorage`) se guarda por
+  cliente, para que no se mezclen las de uno con las de otro en el mismo
+  navegador.
 
 ## Capa de datos (mock ↔ real)
 
@@ -76,15 +97,13 @@ deben resolverse en el servidor; nunca se exponen en el navegador.
 > tabla `data_sources` y hace ingesta para todos ellos, sin que haya que
 > tocar n8n al añadir un cliente nuevo. Un project manager solo necesita:
 >
-> 1. Duplicar este proyecto y su propio deployment en Vercel (compartiendo el
->    mismo Supabase/n8n si gestionas varios clientes desde la misma agencia).
-> 2. Definir en Vercel las variables `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
->    `DASHBOARD_CLIENT_ID` (el uuid de su cliente en la tabla `clients`) y
->    `VITE_DATA_MODE=live`.
-> 3. Ir a **Configuración → Google Ads**, pegar el Customer ID de su cliente y
->    pulsar "Guardar" — esto llama a `/api/data-sources`, que lo escribe en
->    Supabase. El developer token, el Client ID/Secret de OAuth y el acceso vía
->    MCC son compartidos y ya están configurados en n8n; el PM nunca los toca.
+> 1. Ir a `/` y crear el cliente (o pedir que se lo creen) — obtiene su URL
+>    fija `/c/<slug>`.
+> 2. Ir a **`/c/<slug>/settings` → Google Ads**, pegar el Customer ID de su
+>    cliente y pulsar "Guardar" — esto llama a `/api/data-sources`, que lo
+>    escribe en Supabase. El developer token, el Client ID/Secret de OAuth y
+>    el acceso vía MCC son compartidos y ya están configurados en n8n; el PM
+>    nunca los toca, ni toca Vercel.
 >
 > Meta Ads y TikTok Ads seguirán el mismo patrón (tabla propia + workflow de
 > n8n dinámico + endpoint `/api/*`) en cuanto tengan credenciales.

@@ -16,6 +16,7 @@ create extension if not exists "pgcrypto";
 create table if not exists clients (
   id          uuid primary key default gen_random_uuid(),
   name        text not null,
+  slug        text not null unique, -- identifica al cliente en la URL: /c/<slug>/...
   sector      text,
   website     text,
   created_at  timestamptz not null default now()
