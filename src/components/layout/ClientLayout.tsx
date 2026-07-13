@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Navigate, Outlet, useParams } from 'react-router-dom'
 import Layout from './Layout'
 import { ReportConfigProvider } from '@/lib/reportConfig'
+import { DateRangeProvider } from '@/lib/dateRange'
 import { useClientInfo } from '@/lib/useClientInfo'
 import { getStoredToken } from '@/lib/authToken'
 import PasswordGate from '@/pages/PasswordGate'
@@ -39,13 +40,15 @@ export default function ClientLayout() {
 
   return (
     <ReportConfigProvider key={clientSlug} clientSlug={clientSlug}>
-      <Layout
-        clientSlug={clientSlug}
-        clientName={clientInfo.data?.name}
-        logoUrl={clientInfo.data?.logoUrl}
-      >
-        <Outlet context={clientInfo} />
-      </Layout>
+      <DateRangeProvider key={clientSlug}>
+        <Layout
+          clientSlug={clientSlug}
+          clientName={clientInfo.data?.name}
+          logoUrl={clientInfo.data?.logoUrl}
+        >
+          <Outlet context={clientInfo} />
+        </Layout>
+      </DateRangeProvider>
     </ReportConfigProvider>
   )
 }

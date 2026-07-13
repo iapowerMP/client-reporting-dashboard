@@ -12,6 +12,7 @@
  */
 import type {
   DataProvider,
+  DateRange,
   OverviewData,
   PaidData,
   SeoData,
@@ -23,8 +24,13 @@ import { authHeaders, clearToken } from '@/lib/authToken'
 
 class EndpointNotImplemented extends Error {}
 
-async function fetchJson<T>(endpoint: string, client: string): Promise<T> {
-  const url = `${endpoint}?client=${encodeURIComponent(client)}`
+async function fetchJson<T>(endpoint: string, client: string, range?: DateRange): Promise<T> {
+  const params = new URLSearchParams({ client })
+  if (range) {
+    params.set('from', range.from)
+    params.set('to', range.to)
+  }
+  const url = `${endpoint}?${params.toString()}`
   let res: Response
   try {
     res = await fetch(url, { headers: { Accept: 'application/json', ...authHeaders(client) } })
@@ -71,16 +77,18 @@ async function withMockFallback<T>(promise: Promise<T>, mockFn: () => Promise<T>
 
 export const liveProvider: DataProvider = {
   mode: 'live',
-  getOverview: (client) =>
-    withMockFallback(fetchJson<OverviewData>('/api/overview', client), () =>
-      mockProvider.getOverview(client),
+  getOverview: (client, range) =>
+    withMockFallback(fetchJson<OverviewData>('/api/overview', client, range), () =>
+      mockProvider.getOverview(client, range),
     ),
-  getPaid: (client) => fetchJson<PaidData>('/api/paid', client),
-  getSeo: (client) =>
-    withMockFallback(fetchJson<SeoData>('/api/seo', client), () => mockProvider.getSeo(client)),
-  getSocial: (client) =>
-    withMockFallback(fetchJson<SocialData>('/api/social', client), () =>
-      mockProvider.getSocial(client),
+  getPaid: (client, range) => fetchJson<PaidData>('/api/paid', client, range),
+  getSeo: (client, range) =>
+    withMockFallback(fetchJson<SeoData>('/api/seo', client, range), () =>
+      mockProvider.getSeo(client, range),
+    ),
+  getSocial: (client, range) =>
+    withMockFallback(fetchJson<SocialData>('/api/social', client, range), () =>
+      mockProvider.getSocial(client, range),
     ),
   getSettings: (client) =>
     withMockFallback(fetchJson<SettingsData>('/api/settings', client), () =>

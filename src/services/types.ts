@@ -63,15 +63,21 @@ export interface SettingsData {
 
 export type DataMode = 'mock' | 'live'
 
+/** Rango de fechas del selector del informe (7d/30d/90d o personalizado). */
+export interface DateRange {
+  from: string
+  to: string
+}
+
 /**
  * Contrato que cualquier proveedor de datos debe cumplir. Los métodos son
  * asíncronos porque los datos reales llegarán por red (Vercel Functions).
  */
 export interface DataProvider {
   readonly mode: DataMode
-  getOverview(client: string): Promise<OverviewData>
-  getPaid(client: string): Promise<PaidData>
-  getSeo(client: string): Promise<SeoData>
-  getSocial(client: string): Promise<SocialData>
+  getOverview(client: string, range: DateRange): Promise<OverviewData>
+  getPaid(client: string, range: DateRange): Promise<PaidData>
+  getSeo(client: string, range: DateRange): Promise<SeoData>
+  getSocial(client: string, range: DateRange): Promise<SocialData>
   getSettings(client: string): Promise<SettingsData>
 }

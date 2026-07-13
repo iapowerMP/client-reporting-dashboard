@@ -107,10 +107,16 @@ async function handleRequest(req: any, res: any) {
     return
   }
 
+  const from = typeof req.query?.from === 'string' ? req.query.from : ''
+  const to = typeof req.query?.to === 'string' ? req.query.to : ''
+
   const query = new URLSearchParams({
     client_id: `eq.${client.id}`,
     order: 'date.asc',
   })
+  // PostgREST admite repetir la misma columna para acotar un rango (AND).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
 
   try {
     const resp = await fetch(`${SUPABASE_URL}/rest/v1/gads_campaign_daily?${query.toString()}`, {
