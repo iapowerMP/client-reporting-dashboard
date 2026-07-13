@@ -110,20 +110,40 @@ async function handleRequest(req: any, res: any) {
   const from = typeof req.query?.from === 'string' ? req.query.from : ''
   const to = typeof req.query?.to === 'string' ? req.query.to : ''
 
+  const headers = {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  }
+
+  // Si el cliente cambia de cuenta de Google Ads, las filas sincronizadas con
+  // la cuenta anterior no deben mezclarse con las nuevas: se filtra siempre
+  // por la cuenta actualmente configurada en data_sources.
+  let currentCustomerId = ''
+  try {
+    const sourceResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&platform=eq.google-ads&select=external_id`,
+      { headers },
+    )
+    if (sourceResp.ok) {
+      const [source] = (await sourceResp.json()) as Array<{ external_id: string | null }>
+      currentCustomerId = source?.external_id?.trim() ?? ''
+    }
+  } catch {
+    /* si falla esta consulta, seguimos sin filtrar por cuenta (mejor que un 500) */
+  }
+
   const query = new URLSearchParams({
     client_id: `eq.${client.id}`,
     order: 'date.asc',
   })
+  if (currentCustomerId) query.set('customer_id', `eq.${currentCustomerId}`)
   // PostgREST admite repetir la misma columna para acotar un rango (AND).
   if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
   if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
 
   try {
     const resp = await fetch(`${SUPABASE_URL}/rest/v1/gads_campaign_daily?${query.toString()}`, {
-      headers: {
-        apikey: SUPABASE_SERVICE_ROLE_KEY,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
-      },
+      headers,
     })
 
     if (!resp.ok) {
