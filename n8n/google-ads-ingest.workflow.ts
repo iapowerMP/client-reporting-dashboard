@@ -15,9 +15,10 @@
  * En el nodo "Config" hay que rellenar: clientId (uuid del cliente en la tabla
  * `clients`), customerId, loginCustomerId (MCC), developerToken y apiVersion.
  *
- * Nota: la versión de la API (apiVersion, p. ej. "v17") puede necesitar
- * actualizarse a la versión vigente de la Google Ads API. La paginación no está
- * implementada (suficiente para <10k filas / 30 días); se añadirá si hace falta.
+ * Nota: apiVersion está en "v24" (vigente a jul-2026; Google descontinuó v17-v19).
+ * Revisar periódicamente en developers.google.com/google-ads/api/docs/release-notes.
+ * La paginación no está implementada (suficiente para <10k filas / 30 días);
+ * se añadirá si hace falta.
  */
 import { workflow, node, trigger, newCredential } from '@n8n/workflow-sdk'
 
@@ -45,7 +46,7 @@ const config = node({
           { id: 'a2', name: 'customerId', value: 'REEMPLAZAR-customer-id-sin-guiones', type: 'string' },
           { id: 'a3', name: 'loginCustomerId', value: 'REEMPLAZAR-mcc-id-sin-guiones', type: 'string' },
           { id: 'a4', name: 'developerToken', value: 'REEMPLAZAR-developer-token', type: 'string' },
-          { id: 'a5', name: 'apiVersion', value: 'v17', type: 'string' },
+          { id: 'a5', name: 'apiVersion', value: 'v24', type: 'string' },
         ],
       },
       includeOtherFields: false,
