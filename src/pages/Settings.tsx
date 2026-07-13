@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
-import { UploadCloud } from 'lucide-react'
+import { UploadCloud, Loader2 } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import StatusBadge from '@/components/shared/StatusBadge'
 import Toggle from '@/components/shared/Toggle'
@@ -33,6 +33,7 @@ interface RealConnection {
   value: string
   status: StatusVariant
   statusNote: string
+  canSync: boolean
 }
 
 function formatLastSync(iso: string | null): string {
@@ -58,6 +59,7 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
         value,
         status: 'Próximamente',
         statusNote: 'Integración en desarrollo — todavía no sincroniza datos.',
+        canSync: false,
       }
     }
     if (value) {
@@ -66,6 +68,7 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
         value,
         status: 'Conectado',
         statusNote: formatLastSync(row?.last_sync ?? null),
+        canSync: true,
       }
     }
     return {
@@ -73,6 +76,7 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
       value,
       status: 'Pendiente',
       statusNote: 'Guarda el identificador de la cuenta para activar la sincronización.',
+      canSync: false,
     }
   })
 }
@@ -136,12 +140,16 @@ function ConnectionCard({
   onToggleVisible,
   saving,
   onSaveExternalId,
+  syncing,
+  onSync,
 }: {
   conn: RealConnection
   visible: boolean
   onToggleVisible: (value: boolean) => void
   saving: boolean
   onSaveExternalId: (value: string) => void
+  syncing: boolean
+  onSync: () => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -173,6 +181,22 @@ function ConnectionCard({
         >
           {saving ? 'Guardando...' : 'Guardar'}
         </button>
+        {conn.canSync && (
+          <button
+            onClick={onSync}
+            disabled={syncing}
+            className="inline-flex items-center gap-2 rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
+          >
+            {syncing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Sincronizando
+              </>
+            ) : (
+              'Sincronizar ahora'
+            )}
+          </button>
+        )}
       </div>
 
       {/* Visibilidad en el informe */}
@@ -247,6 +271,30 @@ export default function Settings() {
       showToast('No se pudo guardar. Revisa la configuración del servidor (Supabase).')
     } finally {
       setSavingIds((prev) => prev.filter((x) => x !== platform))
+    }
+  }
+
+  const [syncingIds, setSyncingIds] = useState<string[]>([])
+
+  const handleSync = async (platform: string) => {
+    setSyncingIds((prev) => [...prev, platform])
+    try {
+      const resp = await fetch('/api/sync-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        body: JSON.stringify({ client: clientSlug, platform }),
+      })
+      const body = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(body?.error)
+      showToast('Sincronización iniciada')
+      // La sincronización corre en segundo plano en n8n; se comprueba el
+      // resultado un par de veces para reflejar el estado real sin recargar.
+      window.setTimeout(loadSources, 3000)
+      window.setTimeout(loadSources, 8000)
+    } catch (e) {
+      showToast(e instanceof Error && e.message ? e.message : 'No se pudo iniciar la sincronización.')
+    } finally {
+      setSyncingIds((prev) => prev.filter((x) => x !== platform))
     }
   }
 
@@ -463,6 +511,8 @@ export default function Settings() {
               onToggleVisible={(v) => setVisible(conn.id, v)}
               saving={savingIds.includes(conn.id)}
               onSaveExternalId={(value) => handleSaveExternalId(conn.id, value)}
+              syncing={syncingIds.includes(conn.id)}
+              onSync={() => handleSync(conn.id)}
             />
           ))}
         </div>
