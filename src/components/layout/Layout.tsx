@@ -15,9 +15,13 @@ const ROUTE_TITLES: Record<string, string> = {
 export default function Layout({
   children,
   clientSlug,
+  clientName,
+  logoUrl,
 }: {
   children: ReactNode
   clientSlug: string
+  clientName?: string
+  logoUrl?: string | null
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { pathname } = useLocation()
@@ -28,6 +32,8 @@ export default function Layout({
     <div className="min-h-screen bg-base">
       <Sidebar
         clientSlug={clientSlug}
+        clientName={clientName}
+        logoUrl={logoUrl}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />

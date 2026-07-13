@@ -1,13 +1,15 @@
 /**
  * Vercel Function: /api/clients
- * GET  -> lista los clientes (id, name, slug, sector) para la pantalla de
- *         selección inicial.
+ * GET               -> lista los clientes (id, name, slug, sector) para la
+ *                       pantalla de selección inicial.
+ * GET ?slug=<slug>  -> un único cliente con todos sus campos (incluye
+ *                       website y logo_url), para precargar Configuración.
  * POST { name, sector?, website? } -> crea un cliente nuevo, generando un
  *         slug único a partir del nombre, y lo devuelve. Ese slug es el que
  *         identifica al cliente en la URL (/c/<slug>/...).
- * PATCH { client, name?, sector?, website? } -> actualiza los datos del
- *         cliente (identificado por su slug actual). El slug nunca cambia
- *         aquí, para no romper la URL ya compartida/guardada en favoritos.
+ * PATCH { client, name?, sector?, website?, logoUrl? } -> actualiza los datos
+ *         del cliente (identificado por su slug actual). El slug nunca
+ *         cambia aquí, para no romper la URL ya compartida/guardada en favoritos.
  */
 
 function slugify(name: string): string {
@@ -20,6 +22,14 @@ function slugify(name: string): string {
 }
 
 export default async function handler(req: any, res: any) {
+  try {
+    await handleRequest(req, res)
+  } catch (e) {
+    res.status(500).json({ error: `Error inesperado en /api/clients: ${(e as Error).message}` })
+  }
+}
+
+async function handleRequest(req: any, res: any) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -36,6 +46,28 @@ export default async function handler(req: any, res: any) {
   }
 
   if (req.method === 'GET') {
+    const slug = typeof req.query?.slug === 'string' ? req.query.slug : ''
+
+    if (slug) {
+      try {
+        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url`
+        const resp = await fetch(url, { headers })
+        if (!resp.ok) {
+          res.status(502).json({ error: `Supabase respondió ${resp.status} al leer clients.` })
+          return
+        }
+        const [row] = await resp.json()
+        if (!row) {
+          res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+          return
+        }
+        res.status(200).json({ client: row })
+      } catch {
+        res.status(502).json({ error: 'No se pudo leer clients desde Supabase.' })
+      }
+      return
+    }
+
     try {
       const url = `${SUPABASE_URL}/rest/v1/clients?select=id,name,slug,sector&order=created_at.desc`
       const resp = await fetch(url, { headers })
@@ -90,7 +122,7 @@ export default async function handler(req: any, res: any) {
   }
 
   if (req.method === 'PATCH') {
-    const { client: slug, name, sector, website } = req.body ?? {}
+    const { client: slug, name, sector, website, logoUrl } = req.body ?? {}
     if (!slug || typeof slug !== 'string') {
       res.status(400).json({ error: 'Falta el campo client (slug del cliente).' })
       return
@@ -100,6 +132,7 @@ export default async function handler(req: any, res: any) {
     if (typeof name === 'string' && name.trim()) updates.name = name.trim()
     if (typeof sector === 'string') updates.sector = sector.trim() || null
     if (typeof website === 'string') updates.website = website.trim() || null
+    if (typeof logoUrl === 'string') updates.logo_url = logoUrl.trim() || null
 
     if (Object.keys(updates).length === 0) {
       res.status(400).json({ error: 'No hay ningún campo que actualizar.' })

@@ -26,14 +26,17 @@ const NAV_ITEMS: NavItem[] = [
 
 interface SidebarProps {
   clientSlug: string
+  /** Nombre real del cliente (tabla `clients`); mientras carga, se usa el slug. */
+  clientName?: string
+  logoUrl?: string | null
   /** Estado del overlay en móvil. */
   open: boolean
   onClose: () => void
 }
 
-export default function Sidebar({ clientSlug, open, onClose }: SidebarProps) {
+export default function Sidebar({ clientSlug, clientName, logoUrl, open, onClose }: SidebarProps) {
   const base = `/c/${clientSlug}`
-  const clientLabel = clientSlug.replace(/-/g, ' ')
+  const displayName = clientName || clientSlug.replace(/-/g, ' ')
 
   return (
     <>
@@ -52,15 +55,25 @@ export default function Sidebar({ clientSlug, open, onClose }: SidebarProps) {
           open ? 'translate-x-0' : '-translate-x-full',
         )}
       >
-        {/* Cabecera / logo */}
+        {/* Cabecera / logo del cliente */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-control bg-accent">
-                <span className="text-sm font-extrabold text-black">M</span>
-              </span>
-              <span className="text-base font-extrabold tracking-tight text-white">
-                MEDIA POWER
+              {logoUrl ? (
+                <img
+                  src={logoUrl}
+                  alt={displayName}
+                  className="h-7 w-7 rounded-control object-cover"
+                />
+              ) : (
+                <span className="flex h-7 w-7 items-center justify-center rounded-control bg-accent">
+                  <span className="text-sm font-extrabold text-black">
+                    {displayName.slice(0, 1).toUpperCase()}
+                  </span>
+                </span>
+              )}
+              <span className="truncate text-base font-extrabold capitalize tracking-tight text-white">
+                {displayName}
               </span>
             </div>
             <p className="mt-1 pl-9 text-xs text-text-secondary">
@@ -99,15 +112,19 @@ export default function Sidebar({ clientSlug, open, onClose }: SidebarProps) {
           ))}
         </nav>
 
-        {/* Pie: perfil del cliente */}
+        {/* Pie: cuenta activa */}
         <div className="border-t border-border p-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-bold uppercase text-white">
-              {clientLabel.slice(0, 2)}
-            </div>
+            {logoUrl ? (
+              <img src={logoUrl} alt={displayName} className="h-9 w-9 rounded-full object-cover" />
+            ) : (
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-bold uppercase text-white">
+                {displayName.slice(0, 2)}
+              </div>
+            )}
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold capitalize text-white">
-                {clientLabel}
+                {displayName}
               </p>
               <p className="truncate text-xs text-text-secondary">/c/{clientSlug}</p>
             </div>

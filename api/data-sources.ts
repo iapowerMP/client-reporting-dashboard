@@ -10,9 +10,30 @@
  * en cada petición a partir del slug (columna `clients.slug`), no de una
  * variable de entorno fija.
  */
-import { resolveClientId } from './_lib/resolveClient'
+
+async function resolveClientId(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  slug: string,
+): Promise<string | null> {
+  const url = `${supabaseUrl}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id`
+  const resp = await fetch(url, {
+    headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
+  })
+  if (!resp.ok) return null
+  const rows = (await resp.json()) as Array<{ id: string }>
+  return rows[0]?.id ?? null
+}
 
 export default async function handler(req: any, res: any) {
+  try {
+    await handleRequest(req, res)
+  } catch (e) {
+    res.status(500).json({ error: `Error inesperado en /api/data-sources: ${(e as Error).message}` })
+  }
+}
+
+async function handleRequest(req: any, res: any) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env
 
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
