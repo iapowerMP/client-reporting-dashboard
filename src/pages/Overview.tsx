@@ -18,8 +18,21 @@ import { cn, formatCompact, formatNumber } from '@/lib/utils'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
 import { useDateRange } from '@/lib/dateRange'
+import { useReportConfig } from '@/lib/reportConfig'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
-import { type SummaryCard, type AlertRow } from '@/data/mockData'
+import {
+  type SummaryCard,
+  type AlertRow,
+  PAID_TAB_TO_CONNECTION,
+  SEO_TAB_TO_CONNECTION,
+  SOCIAL_TAB_TO_CONNECTION,
+} from '@/data/mockData'
+
+const SERVICIO_TO_CATEGORY: Record<string, SummaryCard['key']> = {
+  'Paid Media': 'paid',
+  SEO: 'seo',
+  RRSS: 'social',
+}
 
 const CARD_ICONS: Record<SummaryCard['key'], LucideIcon> = {
   paid: DollarSign,
@@ -86,16 +99,28 @@ const activityColumns: Column<AlertRow>[] = [
 export default function Overview() {
   const { clientSlug = '' } = useParams()
   const { range } = useDateRange()
+  const { isVisible } = useReportConfig()
   const { data, loading, error } = useAsyncData(
     () => getProvider().getOverview(clientSlug, range),
     [clientSlug, range.from, range.to],
   )
 
+  const categoryVisible: Record<SummaryCard['key'], boolean> = {
+    paid: Object.values(PAID_TAB_TO_CONNECTION).some(isVisible),
+    seo: Object.values(SEO_TAB_TO_CONNECTION).some(isVisible),
+    social: Object.values(SOCIAL_TAB_TO_CONNECTION).some(isVisible),
+  }
+
   if (loading) return <Loading />
   if (error || !data)
     return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
 
-  const { summary, globalPerformance, recentActivity } = data
+  const { globalPerformance, recentActivity } = data
+  const summary = data.summary.filter((card) => categoryVisible[card.key])
+  const visibleActivity = recentActivity.filter((row) => {
+    const cat = SERVICIO_TO_CATEGORY[row.servicio]
+    return cat ? categoryVisible[cat] : true
+  })
 
   return (
     <div className="space-y-6">
@@ -139,30 +164,36 @@ export default function Overview() {
                 wrapperStyle={{ fontSize: 12, paddingTop: 12 }}
                 iconType="plainline"
               />
-              <Line
-                type="monotone"
-                dataKey="paid"
-                name="Inversión Paid (€)"
-                stroke="#F2FE54"
-                strokeWidth={2}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="seo"
-                name="Sesiones SEO"
-                stroke="#60A5FA"
-                strokeWidth={2}
-                dot={false}
-              />
-              <Line
-                type="monotone"
-                dataKey="social"
-                name="Alcance RRSS"
-                stroke="#A78BFA"
-                strokeWidth={2}
-                dot={false}
-              />
+              {categoryVisible.paid && (
+                <Line
+                  type="monotone"
+                  dataKey="paid"
+                  name="Inversión Paid (€)"
+                  stroke="#F2FE54"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
+              {categoryVisible.seo && (
+                <Line
+                  type="monotone"
+                  dataKey="seo"
+                  name="Sesiones SEO"
+                  stroke="#60A5FA"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
+              {categoryVisible.social && (
+                <Line
+                  type="monotone"
+                  dataKey="social"
+                  name="Alcance RRSS"
+                  stroke="#A78BFA"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -172,7 +203,7 @@ export default function Overview() {
       <ChartCard title="Actividad reciente" noPadding>
         <DataTable
           columns={activityColumns}
-          data={recentActivity}
+          data={visibleActivity}
           rowKey={(_, i) => i}
         />
       </ChartCard>

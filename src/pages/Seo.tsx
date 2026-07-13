@@ -30,6 +30,7 @@ import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
 import { useDateRange } from '@/lib/dateRange'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
+import NotContracted from '@/components/shared/NotContracted'
 
 const gscColumns = (firstHeader: string): Column<GscRow>[] => [
   { key: 'label', header: firstHeader, sortable: true },
@@ -79,6 +80,8 @@ export default function Seo() {
   )
   const visibleTabs: SeoTab[] = ['Overview', ...toolTabs]
   const activeTab: SeoTab = visibleTabs.includes(tab) ? tab : 'Overview'
+
+  if (toolTabs.length === 0) return <NotContracted label="SEO" />
 
   if (loading) return <Loading />
   if (error || !data)

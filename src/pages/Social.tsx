@@ -35,6 +35,7 @@ import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
 import { useDateRange } from '@/lib/dateRange'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
+import NotContracted from '@/components/shared/NotContracted'
 
 function PostCard({ post }: { post: Post }) {
   const color = SOCIAL_COLORS[post.platform]
@@ -90,6 +91,8 @@ export default function Social() {
   const visibleTabs: SocialTab[] = ['Todas', ...platformTabs]
   const activeTab: SocialTab = visibleTabs.includes(tab) ? tab : 'Todas'
   const visiblePlatforms: string[] = [...platformTabs]
+
+  if (platformTabs.length === 0) return <NotContracted label="Redes Sociales" />
 
   if (loading) return <Loading />
   if (error || !data)

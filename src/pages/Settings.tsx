@@ -1,20 +1,81 @@
-import { useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
-import { RefreshCw, UploadCloud, Loader2 } from 'lucide-react'
+import { UploadCloud } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
-import DataTable, { type Column } from '@/components/shared/DataTable'
 import StatusBadge from '@/components/shared/StatusBadge'
 import Toggle from '@/components/shared/Toggle'
 import { useReportConfig } from '@/lib/reportConfig'
-import { cn } from '@/lib/utils'
-import { type Connection, type SyncLog } from '@/data/mockData'
-import { getProvider } from '@/services'
-import { useAsyncData } from '@/lib/useAsyncData'
+import { CONNECTION_CATALOG, type StatusVariant } from '@/data/mockData'
 import { type useClientInfo } from '@/lib/useClientInfo'
 import { authHeaders } from '@/lib/authToken'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024
+
+/** Plataformas con integración real ya construida (ingesta de datos vía
+ * n8n/Supabase). El resto del catálogo existe para poder guardar ya su ID de
+ * cuenta, pero no sincroniza nada todavía — el estado debe decirlo con
+ * claridad en vez de simular una conexión que no existe. */
+const BUILT_INTEGRATIONS = new Set(['google-ads'])
+
+interface DataSourceRow {
+  platform: string
+  external_id: string | null
+  status: string
+  last_sync: string | null
+}
+
+interface RealConnection {
+  id: string
+  platform: string
+  label: string
+  placeholder: string
+  value: string
+  status: StatusVariant
+  statusNote: string
+}
+
+function formatLastSync(iso: string | null): string {
+  if (!iso) return 'Aún no se ha sincronizado.'
+  const d = new Date(iso)
+  return `Última sincronización: ${d.toLocaleString('es-ES', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`
+}
+
+function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
+  const byPlatform = new Map(sources.map((s) => [s.platform, s]))
+  return CONNECTION_CATALOG.map((entry) => {
+    const row = byPlatform.get(entry.id)
+    const value = row?.external_id ?? ''
+    if (!BUILT_INTEGRATIONS.has(entry.id)) {
+      return {
+        ...entry,
+        value,
+        status: 'Próximamente',
+        statusNote: 'Integración en desarrollo — todavía no sincroniza datos.',
+      }
+    }
+    if (value) {
+      return {
+        ...entry,
+        value,
+        status: 'Conectado',
+        statusNote: formatLastSync(row?.last_sync ?? null),
+      }
+    }
+    return {
+      ...entry,
+      value,
+      status: 'Pendiente',
+      statusNote: 'Guarda el identificador de la cuenta para activar la sincronización.',
+    }
+  })
+}
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -71,16 +132,12 @@ function Field({
 
 function ConnectionCard({
   conn,
-  syncing,
-  onSync,
   visible,
   onToggleVisible,
   saving,
   onSaveExternalId,
 }: {
-  conn: Connection
-  syncing: boolean
-  onSync: () => void
+  conn: RealConnection
   visible: boolean
   onToggleVisible: (value: boolean) => void
   saving: boolean
@@ -104,16 +161,8 @@ function ConnectionCard({
         />
       </div>
 
-      <div className="mt-3 min-h-[18px] text-xs">
-        {conn.status === 'Error' && conn.errorMessage ? (
-          <span className="text-negative">{conn.errorMessage}</span>
-        ) : conn.lastSync === 'Nunca' ? (
-          <span className="text-text-secondary">Nunca sincronizado</span>
-        ) : (
-          <span className="text-text-secondary">
-            Última sincronización: {conn.lastSync}
-          </span>
-        )}
+      <div className="mt-3 min-h-[18px] text-xs text-text-secondary">
+        {conn.statusNote}
       </div>
 
       <div className="mt-4 flex items-center gap-2">
@@ -123,20 +172,6 @@ function ConnectionCard({
           className="rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
         >
           {saving ? 'Guardando...' : 'Guardar'}
-        </button>
-        <button
-          onClick={onSync}
-          disabled={syncing}
-          className="inline-flex items-center gap-2 rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
-        >
-          {syncing ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Sincronizando
-            </>
-          ) : (
-            'Sincronizar'
-          )}
         </button>
       </div>
 
@@ -155,30 +190,6 @@ function ConnectionCard({
   )
 }
 
-/* ------------------------------ Tabla de logs ---------------------------- */
-
-const logColumns: Column<SyncLog>[] = [
-  { key: 'fechaHora', header: 'Fecha/Hora', sortable: true },
-  { key: 'plataforma', header: 'Plataforma', sortable: true },
-  {
-    key: 'estado',
-    header: 'Estado',
-    sortable: true,
-    render: (r) => (
-      <span
-        className={cn(
-          'inline-flex items-center gap-1.5 text-sm',
-          r.estado === 'Completado' ? 'text-positive' : 'text-negative',
-        )}
-      >
-        {r.estado === 'Completado' ? '✅' : '❌'} {r.estado}
-      </span>
-    ),
-  },
-  { key: 'registros', header: 'Registros', align: 'right' },
-  { key: 'duracion', header: 'Duración', align: 'right' },
-]
-
 /* -------------------------------- Página --------------------------------- */
 
 export default function Settings() {
@@ -186,14 +197,35 @@ export default function Settings() {
   const navigate = useNavigate()
   const clientInfo = useOutletContext<ReturnType<typeof useClientInfo>>()
   const { isVisible, setVisible } = useReportConfig()
-  const { data, loading, error } = useAsyncData(
-    () => getProvider().getSettings(clientSlug),
-    [clientSlug],
-  )
+  const [sources, setSources] = useState<DataSourceRow[] | null>(null)
+  const [sourcesLoading, setSourcesLoading] = useState(true)
+  const [sourcesError, setSourcesError] = useState<string | null>(null)
   const [toast, setToast] = useState<string | null>(null)
-  const [syncingIds, setSyncingIds] = useState<string[]>([])
   const [savingIds, setSavingIds] = useState<string[]>([])
   const [uploadingLogo, setUploadingLogo] = useState(false)
+
+  const loadSources = useCallback(async () => {
+    setSourcesLoading(true)
+    setSourcesError(null)
+    try {
+      const resp = await fetch(`/api/data-sources?client=${encodeURIComponent(clientSlug)}`, {
+        headers: { Accept: 'application/json', ...authHeaders(clientSlug) },
+      })
+      if (!resp.ok) throw new Error(`El servidor respondió ${resp.status}`)
+      const body = await resp.json()
+      setSources(body.sources ?? [])
+    } catch (e) {
+      setSourcesError(
+        e instanceof Error ? e.message : 'No se pudieron cargar las conexiones.',
+      )
+    } finally {
+      setSourcesLoading(false)
+    }
+  }, [clientSlug])
+
+  useEffect(() => {
+    loadSources()
+  }, [loadSources])
 
   const showToast = (message: string) => {
     setToast(message)
@@ -209,6 +241,7 @@ export default function Settings() {
         body: JSON.stringify({ client: clientSlug, platform, externalId }),
       })
       if (!resp.ok) throw new Error()
+      await loadSources()
       showToast('Guardado correctamente')
     } catch {
       showToast('No se pudo guardar. Revisa la configuración del servidor (Supabase).')
@@ -319,24 +352,11 @@ export default function Settings() {
     }
   }
 
-  const handleSyncAll = () => {
-    showToast('Sincronización iniciada para todas las plataformas')
-  }
+  if (sourcesLoading) return <Loading />
+  if (sourcesError || !sources)
+    return <ErrorState message={sourcesError ?? 'No se pudieron cargar las conexiones.'} />
 
-  const handleSyncOne = (id: string) => {
-    if (syncingIds.includes(id)) return
-    setSyncingIds((prev) => [...prev, id])
-    window.setTimeout(() => {
-      setSyncingIds((prev) => prev.filter((x) => x !== id))
-      showToast('Sincronización completada')
-    }, 2000)
-  }
-
-  if (loading) return <Loading />
-  if (error || !data)
-    return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
-
-  const { connections, syncLogs } = data
+  const realConnections = buildRealConnections(sources)
   const clientData = clientInfo.data
 
   return (
@@ -430,24 +450,15 @@ export default function Settings() {
 
       {/* Conexiones */}
       <div>
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4">
           <h2 className="text-lg font-semibold text-white">Conexiones</h2>
-          <button
-            onClick={handleSyncAll}
-            className="inline-flex items-center gap-2 rounded-control bg-accent px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
-          >
-            <RefreshCw className="h-4 w-4" />
-            Sincronizar todo
-          </button>
         </div>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {connections.map((conn) => (
+          {realConnections.map((conn) => (
             <ConnectionCard
               key={conn.id}
               conn={conn}
-              syncing={syncingIds.includes(conn.id)}
-              onSync={() => handleSyncOne(conn.id)}
               visible={isVisible(conn.id)}
               onToggleVisible={(v) => setVisible(conn.id, v)}
               saving={savingIds.includes(conn.id)}
@@ -458,8 +469,10 @@ export default function Settings() {
       </div>
 
       {/* Log de sincronizaciones */}
-      <ChartCard title="Historial de sincronizaciones" noPadding>
-        <DataTable columns={logColumns} data={syncLogs} rowKey={(_, i) => i} />
+      <ChartCard title="Historial de sincronizaciones">
+        <p className="py-4 text-center text-sm text-text-secondary">
+          El historial detallado de sincronizaciones estará disponible próximamente.
+        </p>
       </ChartCard>
 
       {toast && <Toast message={toast} />}

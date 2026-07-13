@@ -79,6 +79,7 @@ export type StatusVariant =
   | 'Pausada'
   | 'Conectado'
   | 'Pendiente'
+  | 'Próximamente'
   | 'Error'
   | 'Revisar'
   | 'Positivo'
@@ -687,6 +688,21 @@ export const connections: Connection[] = [
   { id: 'tiktok-org', platform: 'TikTok (orgánico)', label: 'Username', placeholder: '@tuusuario', value: '', status: 'Pendiente', lastSync: 'Nunca' },
   { id: 'youtube', platform: 'YouTube', label: 'Channel ID', placeholder: 'UCXXXXXXXXXX', value: 'UCx8dk29FalPqe', status: 'Error', lastSync: 'Hace 6 horas', errorMessage: 'Error: cuota diaria de la API agotada. Reintente mañana.' },
 ]
+
+/** Metadatos de plataforma (id, nombre, campo, placeholder) sin los valores
+ * ficticios de estado/sincronización — usados por Configuración en modo real
+ * para saber qué plataformas existen, combinados con los datos reales de
+ * /api/data-sources. */
+export interface ConnectionCatalogEntry {
+  id: string
+  platform: string
+  label: string
+  placeholder: string
+}
+
+export const CONNECTION_CATALOG: ConnectionCatalogEntry[] = connections.map(
+  ({ id, platform, label, placeholder }) => ({ id, platform, label, placeholder }),
+)
 
 export interface SyncLog {
   fechaHora: string

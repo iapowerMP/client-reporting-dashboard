@@ -9,18 +9,29 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useReportConfig } from '@/lib/reportConfig'
+import {
+  PAID_TAB_TO_CONNECTION,
+  SEO_TAB_TO_CONNECTION,
+  SOCIAL_TAB_TO_CONNECTION,
+} from '@/data/mockData'
+
+type Category = 'paid' | 'seo' | 'social'
 
 interface NavItem {
   suffix: string
   label: string
   icon: LucideIcon
+  /** Si se indica, el item solo se muestra si esa categoría tiene al menos
+   * una fuente activada en Configuración (el cliente la tiene contratada). */
+  category?: Category
 }
 
 const NAV_ITEMS: NavItem[] = [
   { suffix: '', label: 'Overview', icon: LayoutDashboard },
-  { suffix: '/paid', label: 'Paid Media', icon: DollarSign },
-  { suffix: '/seo', label: 'SEO', icon: Search },
-  { suffix: '/social', label: 'Redes Sociales', icon: Smartphone },
+  { suffix: '/paid', label: 'Paid Media', icon: DollarSign, category: 'paid' },
+  { suffix: '/seo', label: 'SEO', icon: Search, category: 'seo' },
+  { suffix: '/social', label: 'Redes Sociales', icon: Smartphone, category: 'social' },
 ]
 
 interface SidebarProps {
@@ -36,6 +47,16 @@ interface SidebarProps {
 export default function Sidebar({ clientSlug, clientName, logoUrl, open, onClose }: SidebarProps) {
   const base = `/c/${clientSlug}`
   const displayName = clientName || clientSlug.replace(/-/g, ' ')
+  const { isVisible } = useReportConfig()
+
+  const categoryHasSource: Record<Category, boolean> = {
+    paid: Object.values(PAID_TAB_TO_CONNECTION).some(isVisible),
+    seo: Object.values(SEO_TAB_TO_CONNECTION).some(isVisible),
+    social: Object.values(SOCIAL_TAB_TO_CONNECTION).some(isVisible),
+  }
+  const navItems = NAV_ITEMS.filter(
+    (item) => !item.category || categoryHasSource[item.category],
+  )
 
   return (
     <>
@@ -90,7 +111,7 @@ export default function Sidebar({ clientSlug, clientName, logoUrl, open, onClose
 
         {/* Navegación */}
         <nav className="mt-2 flex-1 space-y-1 px-3">
-          {NAV_ITEMS.map(({ suffix, label, icon: Icon }) => (
+          {navItems.map(({ suffix, label, icon: Icon }) => (
             <NavLink
               key={suffix}
               to={`${base}${suffix}`}

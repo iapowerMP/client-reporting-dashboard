@@ -41,6 +41,7 @@ import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
 import { useDateRange } from '@/lib/dateRange'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
+import NotContracted from '@/components/shared/NotContracted'
 
 type TopMetric = 'inversion' | 'impresiones' | 'clics' | 'conversiones' | 'roas'
 
@@ -146,6 +147,8 @@ export default function PaidMedia() {
   const visibleTabs: PaidTab[] = ['Todas', ...platformTabs]
   const activeTab: PaidTab = visibleTabs.includes(tab) ? tab : 'Todas'
   const visiblePlatforms: string[] = [...platformTabs]
+
+  if (platformTabs.length === 0) return <NotContracted label="Paid Media" />
 
   if (loading) return <Loading />
   if (error || !data)
