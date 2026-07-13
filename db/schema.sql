@@ -19,8 +19,15 @@ create table if not exists clients (
   slug        text not null unique, -- identifica al cliente en la URL: /c/<slug>/...
   sector      text,
   website     text,
+  logo_url    text,
   created_at  timestamptz not null default now()
 );
+
+-- Bucket público para los logos de cliente (sube /api/upload-logo con la
+-- service role key; la lectura pública no necesita políticas RLS).
+insert into storage.buckets (id, name, public)
+values ('logos', 'logos', true)
+on conflict (id) do nothing;
 
 -- ----------------------------------------------------------------------------
 --  Fuentes de datos conectadas por cliente (una fila por plataforma).

@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useRef, useState, type ChangeEvent } from 'react'
+import { useOutletContext, useParams } from 'react-router-dom'
 import { RefreshCw, UploadCloud, Loader2 } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import DataTable, { type Column } from '@/components/shared/DataTable'
@@ -10,7 +10,19 @@ import { cn } from '@/lib/utils'
 import { type Connection, type SyncLog } from '@/data/mockData'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
+import { type useClientInfo } from '@/lib/useClientInfo'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
+
+const MAX_LOGO_BYTES = 2 * 1024 * 1024
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
 
 /* ----------------------------- Toast simple ------------------------------ */
 
@@ -170,6 +182,7 @@ const logColumns: Column<SyncLog>[] = [
 
 export default function Settings() {
   const { clientSlug = '' } = useParams()
+  const clientInfo = useOutletContext<ReturnType<typeof useClientInfo>>()
   const { isVisible, setVisible } = useReportConfig()
   const { data, loading, error } = useAsyncData(
     () => getProvider().getSettings(clientSlug),
@@ -178,6 +191,7 @@ export default function Settings() {
   const [toast, setToast] = useState<string | null>(null)
   const [syncingIds, setSyncingIds] = useState<string[]>([])
   const [savingIds, setSavingIds] = useState<string[]>([])
+  const [uploadingLogo, setUploadingLogo] = useState(false)
 
   const showToast = (message: string) => {
     setToast(message)
@@ -220,11 +234,38 @@ export default function Settings() {
         }),
       })
       if (!resp.ok) throw new Error()
+      await clientInfo.refetch()
       showToast('Guardado correctamente')
     } catch {
       showToast('No se pudo guardar. Revisa la configuración del servidor (Supabase).')
     } finally {
       setSavingClient(false)
+    }
+  }
+
+  const handleLogoChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (file.size > MAX_LOGO_BYTES) {
+      showToast('El archivo pesa demasiado (máximo 2 MB).')
+      return
+    }
+    setUploadingLogo(true)
+    try {
+      const dataUrl = await readFileAsDataUrl(file)
+      const resp = await fetch('/api/upload-logo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client: clientSlug, filename: file.name, dataUrl }),
+      })
+      if (!resp.ok) throw new Error()
+      await clientInfo.refetch()
+      showToast('Logo actualizado')
+    } catch {
+      showToast('No se pudo subir el logo. Revisa la configuración del servidor (Supabase).')
+    } finally {
+      setUploadingLogo(false)
     }
   }
 
@@ -245,23 +286,43 @@ export default function Settings() {
   if (error || !data)
     return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
 
-  const { client, connections, syncLogs } = data
+  const { connections, syncLogs } = data
+  const clientData = clientInfo.data
 
   return (
     <div className="space-y-6">
       {/* Datos del cliente */}
       <ChartCard title="Datos del cliente">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Nombre del cliente" defaultValue={client.nombre} inputRef={clientNameRef} />
-          <Field label="Sector" defaultValue={client.sector} inputRef={clientSectorRef} />
-          <Field label="Sitio web" defaultValue={client.sitioWeb} inputRef={clientWebsiteRef} />
+        <div
+          key={`${clientData?.name ?? ''}-${clientData?.sector ?? ''}-${clientData?.website ?? ''}`}
+          className="grid grid-cols-1 gap-4 sm:grid-cols-2"
+        >
+          <Field label="Nombre del cliente" defaultValue={clientData?.name} inputRef={clientNameRef} />
+          <Field label="Sector" defaultValue={clientData?.sector ?? ''} inputRef={clientSectorRef} />
+          <Field label="Sitio web" defaultValue={clientData?.website ?? ''} inputRef={clientWebsiteRef} />
           <div>
             <span className="mb-1.5 block text-xs font-medium text-text-secondary">
               Logo
             </span>
-            <div className="flex h-[42px] items-center gap-2 rounded-control border border-dashed border-border bg-base px-3 text-sm text-text-secondary">
-              <UploadCloud className="h-4 w-4" />
-              Arrastra o selecciona un archivo
+            <div className="flex items-center gap-3">
+              {clientData?.logoUrl && (
+                <img
+                  src={clientData.logoUrl}
+                  alt="Logo"
+                  className="h-[42px] w-[42px] shrink-0 rounded-control border border-border object-cover"
+                />
+              )}
+              <label className="flex h-[42px] flex-1 cursor-pointer items-center gap-2 rounded-control border border-dashed border-border bg-base px-3 text-sm text-text-secondary transition-colors hover:border-accent/60">
+                <UploadCloud className="h-4 w-4" />
+                {uploadingLogo ? 'Subiendo...' : 'Arrastra o selecciona un archivo'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  disabled={uploadingLogo}
+                  onChange={handleLogoChange}
+                />
+              </label>
             </div>
           </div>
         </div>
