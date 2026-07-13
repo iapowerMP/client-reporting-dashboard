@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { useParams } from 'react-router-dom'
 import { RefreshCw, UploadCloud, Loader2 } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import DataTable, { type Column } from '@/components/shared/DataTable'
@@ -168,8 +169,12 @@ const logColumns: Column<SyncLog>[] = [
 /* -------------------------------- Página --------------------------------- */
 
 export default function Settings() {
+  const { clientSlug = '' } = useParams()
   const { isVisible, setVisible } = useReportConfig()
-  const { data, loading, error } = useAsyncData(() => getProvider().getSettings())
+  const { data, loading, error } = useAsyncData(
+    () => getProvider().getSettings(clientSlug),
+    [clientSlug],
+  )
   const [toast, setToast] = useState<string | null>(null)
   const [syncingIds, setSyncingIds] = useState<string[]>([])
   const [savingIds, setSavingIds] = useState<string[]>([])
@@ -185,7 +190,7 @@ export default function Settings() {
       const resp = await fetch('/api/data-sources', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform, externalId }),
+        body: JSON.stringify({ client: clientSlug, platform, externalId }),
       })
       if (!resp.ok) throw new Error()
       showToast('Guardado correctamente')

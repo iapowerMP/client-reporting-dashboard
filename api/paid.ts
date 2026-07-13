@@ -1,13 +1,18 @@
 /**
- * Vercel Function: GET /api/paid
+ * Vercel Function: GET /api/paid?client=<slug>
  * Lee las métricas diarias de Google Ads desde Supabase (tabla
  * gads_campaign_daily) y las agrega en la forma que espera PaidData
  * (src/services/types.ts). Meta Ads y TikTok Ads se añadirán del mismo modo
  * cuando tengan su propia tabla / integración.
  *
+ * El deployment es compartido por todos los clientes: el cliente se resuelve
+ * en cada petición a partir del slug de la URL (?client=), no de una variable
+ * de entorno fija.
+ *
  * Variables de entorno requeridas (Vercel → Settings → Environment Variables):
- *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DASHBOARD_CLIENT_ID
+ *   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
  */
+import { resolveClientId } from './_lib/resolveClient'
 
 interface GadsRow {
   date: string
@@ -29,18 +34,29 @@ function formatDateLabel(iso: string) {
 }
 
 export default async function handler(req: any, res: any) {
-  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DASHBOARD_CLIENT_ID } = process.env
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env
 
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !DASHBOARD_CLIENT_ID) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
     res.status(500).json({
-      error:
-        'Faltan variables de entorno en el servidor (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, DASHBOARD_CLIENT_ID).',
+      error: 'Faltan variables de entorno en el servidor (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).',
     })
     return
   }
 
+  const slug = typeof req.query?.client === 'string' ? req.query.client : ''
+  if (!slug) {
+    res.status(400).json({ error: 'Falta el parámetro client en la petición.' })
+    return
+  }
+
+  const clientId = await resolveClientId(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+  if (!clientId) {
+    res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+    return
+  }
+
   const query = new URLSearchParams({
-    client_id: `eq.${DASHBOARD_CLIENT_ID}`,
+    client_id: `eq.${clientId}`,
     order: 'date.asc',
   })
 

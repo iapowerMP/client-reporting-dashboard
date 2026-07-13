@@ -3,23 +3,34 @@ import { useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 
-/** Título de la sección según la ruta actual. */
+/** Título de la sección según el sufijo de ruta dentro de /c/:clientSlug/... */
 const ROUTE_TITLES: Record<string, string> = {
-  '/': 'Overview',
+  '': 'Overview',
   '/paid': 'Paid Media',
   '/seo': 'SEO',
   '/social': 'Redes Sociales',
   '/settings': 'Configuración',
 }
 
-export default function Layout({ children }: { children: ReactNode }) {
+export default function Layout({
+  children,
+  clientSlug,
+}: {
+  children: ReactNode
+  clientSlug: string
+}) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { pathname } = useLocation()
-  const title = ROUTE_TITLES[pathname] ?? 'Overview'
+  const suffix = pathname.replace(`/c/${clientSlug}`, '')
+  const title = ROUTE_TITLES[suffix] ?? 'Overview'
 
   return (
     <div className="min-h-screen bg-base">
-      <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <Sidebar
+        clientSlug={clientSlug}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+      />
 
       {/* Área de contenido: desplazada 260px en desktop por el sidebar fijo */}
       <div className="md:pl-[260px]">

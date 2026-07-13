@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useParams } from 'react-router-dom'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -106,9 +107,13 @@ const campaignColumns: Column<Campaign>[] = [
 ]
 
 export default function PaidMedia() {
+  const { clientSlug = '' } = useParams()
   const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<PaidTab>('Todas')
-  const { data, loading, error } = useAsyncData(() => getProvider().getPaid())
+  const { data, loading, error } = useAsyncData(
+    () => getProvider().getPaid(clientSlug),
+    [clientSlug],
+  )
 
   // Solo se muestran las plataformas activadas en Configuración.
   const platformTabs = PAID_PLATFORMS.filter((p) =>

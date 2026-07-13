@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useParams } from 'react-router-dom'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -62,9 +63,13 @@ const gscColumns = (firstHeader: string): Column<GscRow>[] => [
 ]
 
 export default function Seo() {
+  const { clientSlug = '' } = useParams()
   const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<SeoTab>('Overview')
-  const { data, loading, error } = useAsyncData(() => getProvider().getSeo())
+  const { data, loading, error } = useAsyncData(
+    () => getProvider().getSeo(clientSlug),
+    [clientSlug],
+  )
 
   // "Overview" siempre visible; el resto de herramientas según Configuración.
   const toolTabs = (['GA4', 'Search Console', 'Semrush'] as SeoTab[]).filter(

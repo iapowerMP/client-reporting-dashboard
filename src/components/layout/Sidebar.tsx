@@ -11,26 +11,30 @@ import {
 import { cn } from '@/lib/utils'
 
 interface NavItem {
-  to: string
+  suffix: string
   label: string
   icon: LucideIcon
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: '/', label: 'Overview', icon: LayoutDashboard },
-  { to: '/paid', label: 'Paid Media', icon: DollarSign },
-  { to: '/seo', label: 'SEO', icon: Search },
-  { to: '/social', label: 'Redes Sociales', icon: Smartphone },
-  { to: '/settings', label: 'Configuración', icon: Settings },
+  { suffix: '', label: 'Overview', icon: LayoutDashboard },
+  { suffix: '/paid', label: 'Paid Media', icon: DollarSign },
+  { suffix: '/seo', label: 'SEO', icon: Search },
+  { suffix: '/social', label: 'Redes Sociales', icon: Smartphone },
+  { suffix: '/settings', label: 'Configuración', icon: Settings },
 ]
 
 interface SidebarProps {
+  clientSlug: string
   /** Estado del overlay en móvil. */
   open: boolean
   onClose: () => void
 }
 
-export default function Sidebar({ open, onClose }: SidebarProps) {
+export default function Sidebar({ clientSlug, open, onClose }: SidebarProps) {
+  const base = `/c/${clientSlug}`
+  const clientLabel = clientSlug.replace(/-/g, ' ')
+
   return (
     <>
       {/* Backdrop en móvil */}
@@ -74,11 +78,11 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
 
         {/* Navegación */}
         <nav className="mt-2 flex-1 space-y-1 px-3">
-          {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+          {NAV_ITEMS.map(({ suffix, label, icon: Icon }) => (
             <NavLink
-              key={to}
-              to={to}
-              end={to === '/'}
+              key={suffix}
+              to={`${base}${suffix}`}
+              end={suffix === ''}
               onClick={onClose}
               className={({ isActive }) =>
                 cn(
@@ -98,14 +102,14 @@ export default function Sidebar({ open, onClose }: SidebarProps) {
         {/* Pie: perfil del cliente */}
         <div className="border-t border-border p-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-bold text-white">
-              CD
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-xs font-bold uppercase text-white">
+              {clientLabel.slice(0, 2)}
             </div>
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-white">
-                Cliente Demo
+              <p className="truncate text-sm font-semibold capitalize text-white">
+                {clientLabel}
               </p>
-              <p className="truncate text-xs text-text-secondary">E-commerce</p>
+              <p className="truncate text-xs text-text-secondary">/c/{clientSlug}</p>
             </div>
           </div>
         </div>

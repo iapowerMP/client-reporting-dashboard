@@ -69,9 +69,9 @@ export type DataMode = 'mock' | 'live'
  */
 export interface DataProvider {
   readonly mode: DataMode
-  getOverview(): Promise<OverviewData>
-  getPaid(): Promise<PaidData>
-  getSeo(): Promise<SeoData>
-  getSocial(): Promise<SocialData>
-  getSettings(): Promise<SettingsData>
+  getOverview(client: string): Promise<OverviewData>
+  getPaid(client: string): Promise<PaidData>
+  getSeo(client: string): Promise<SeoData>
+  getSocial(client: string): Promise<SocialData>
+  getSettings(client: string): Promise<SettingsData>
 }

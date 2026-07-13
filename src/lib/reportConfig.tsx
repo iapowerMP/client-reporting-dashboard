@@ -16,7 +16,9 @@ import { connections } from '@/data/mockData'
 
 type VisibilityMap = Record<string, boolean>
 
-const STORAGE_KEY = 'mp-report-visibility'
+/** Cada cliente tiene su propia preferencia, para no mezclarlas en un
+ * deployment compartido por varios clientes. */
+const storageKey = (clientSlug: string) => `mp-report-visibility:${clientSlug}`
 
 /** Por defecto: visibles las conexiones "Conectado"; ocultas las demás. */
 function defaultVisibility(): VisibilityMap {
@@ -35,11 +37,17 @@ interface ReportConfigValue {
 
 const ReportConfigContext = createContext<ReportConfigValue | null>(null)
 
-export function ReportConfigProvider({ children }: { children: ReactNode }) {
+export function ReportConfigProvider({
+  children,
+  clientSlug,
+}: {
+  children: ReactNode
+  clientSlug: string
+}) {
   const [visibility, setVisibility] = useState<VisibilityMap>(() => {
     const defaults = defaultVisibility()
     try {
-      const raw = localStorage.getItem(STORAGE_KEY)
+      const raw = localStorage.getItem(storageKey(clientSlug))
       if (raw) return { ...defaults, ...(JSON.parse(raw) as VisibilityMap) }
     } catch {
       /* almacenamiento no disponible: usar defaults */
@@ -49,11 +57,11 @@ export function ReportConfigProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(visibility))
+      localStorage.setItem(storageKey(clientSlug), JSON.stringify(visibility))
     } catch {
       /* ignorar errores de escritura */
     }
-  }, [visibility])
+  }, [clientSlug, visibility])
 
   const value = useMemo<ReportConfigValue>(
     () => ({

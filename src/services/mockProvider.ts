@@ -30,7 +30,7 @@ import {
 export const mockProvider: DataProvider = {
   mode: 'mock',
 
-  async getOverview() {
+  async getOverview(_client) {
     return {
       summary: overviewSummary,
       globalPerformance,
@@ -38,7 +38,7 @@ export const mockProvider: DataProvider = {
     }
   },
 
-  async getPaid() {
+  async getPaid(_client) {
     return {
       campaigns,
       invConv: paidInvConv,
@@ -47,7 +47,7 @@ export const mockProvider: DataProvider = {
     }
   },
 
-  async getSeo() {
+  async getSeo(_client) {
     return {
       kpis: seoKpis,
       traffic: seoTraffic,
@@ -58,7 +58,7 @@ export const mockProvider: DataProvider = {
     }
   },
 
-  async getSocial() {
+  async getSocial(_client) {
     return {
       stats: socialStats,
       followers: socialFollowers,
@@ -68,7 +68,7 @@ export const mockProvider: DataProvider = {
     }
   },
 
-  async getSettings() {
+  async getSettings(_client) {
     return {
       client: clientData,
       connections,

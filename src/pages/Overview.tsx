@@ -1,3 +1,4 @@
+import { useParams } from 'react-router-dom'
 import {
   ResponsiveContainer,
   LineChart,
@@ -82,7 +83,11 @@ const activityColumns: Column<AlertRow>[] = [
 ]
 
 export default function Overview() {
-  const { data, loading, error } = useAsyncData(() => getProvider().getOverview())
+  const { clientSlug = '' } = useParams()
+  const { data, loading, error } = useAsyncData(
+    () => getProvider().getOverview(clientSlug),
+    [clientSlug],
+  )
 
   if (loading) return <Loading />
   if (error || !data)

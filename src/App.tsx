@@ -1,5 +1,6 @@
 import { Routes, Route } from 'react-router-dom'
-import Layout from './components/layout/Layout'
+import ClientLayout from './components/layout/ClientLayout'
+import ClientPicker from './pages/ClientPicker'
 import Overview from './pages/Overview'
 import PaidMedia from './pages/PaidMedia'
 import Seo from './pages/Seo'
@@ -8,14 +9,15 @@ import Settings from './pages/Settings'
 
 export default function App() {
   return (
-    <Layout>
-      <Routes>
-        <Route path="/" element={<Overview />} />
-        <Route path="/paid" element={<PaidMedia />} />
-        <Route path="/seo" element={<Seo />} />
-        <Route path="/social" element={<Social />} />
-        <Route path="/settings" element={<Settings />} />
-      </Routes>
-    </Layout>
+    <Routes>
+      <Route path="/" element={<ClientPicker />} />
+      <Route path="/c/:clientSlug" element={<ClientLayout />}>
+        <Route index element={<Overview />} />
+        <Route path="paid" element={<PaidMedia />} />
+        <Route path="seo" element={<Seo />} />
+        <Route path="social" element={<Social />} />
+        <Route path="settings" element={<Settings />} />
+      </Route>
+    </Routes>
   )
 }
