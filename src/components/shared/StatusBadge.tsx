@@ -17,6 +17,7 @@ const STYLES: Record<string, string> = {
   // Grises (neutro)
   Pausada: 'bg-white/10 text-text-secondary',
   Pendiente: 'bg-white/10 text-text-secondary',
+  Próximamente: 'bg-white/5 text-text-secondary/80',
   // Rojos (error)
   Error: 'bg-negative/15 text-negative',
   // Amarillo (atención)
