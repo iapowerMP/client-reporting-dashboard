@@ -70,13 +70,24 @@ deben resolverse en el servidor; nunca se exponen en el navegador.
 > desactivar cada fuente en el informe. La persistencia segura de credenciales y
 > las integraciones reales por plataforma se irán añadiendo una a una.
 >
-> **Google Ads** ya está integrado de extremo a extremo: un workflow de n8n
-> hace ingesta diaria vía GAQL a la tabla `gads_campaign_daily` de Supabase, y
-> la función `/api/paid` la lee y agrega en la forma de `PaidData`. Solo falta
-> definir en Vercel `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` y
-> `DASHBOARD_CLIENT_ID`, y poner `VITE_DATA_MODE=live` para verlo en Paid
-> Media. Meta Ads y TikTok Ads seguirán el mismo patrón (tabla propia +
-> workflow de n8n + endpoint `/api/*`).
+> **Google Ads** ya está integrado de extremo a extremo, y de forma
+> **multi-cliente**: el workflow de n8n (`n8n/google-ads-ingest.workflow.ts`)
+> lee en cada ejecución qué clientes tienen un Customer ID guardado en la
+> tabla `data_sources` y hace ingesta para todos ellos, sin que haya que
+> tocar n8n al añadir un cliente nuevo. Un project manager solo necesita:
+>
+> 1. Duplicar este proyecto y su propio deployment en Vercel (compartiendo el
+>    mismo Supabase/n8n si gestionas varios clientes desde la misma agencia).
+> 2. Definir en Vercel las variables `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+>    `DASHBOARD_CLIENT_ID` (el uuid de su cliente en la tabla `clients`) y
+>    `VITE_DATA_MODE=live`.
+> 3. Ir a **Configuración → Google Ads**, pegar el Customer ID de su cliente y
+>    pulsar "Guardar" — esto llama a `/api/data-sources`, que lo escribe en
+>    Supabase. El developer token, el Client ID/Secret de OAuth y el acceso vía
+>    MCC son compartidos y ya están configurados en n8n; el PM nunca los toca.
+>
+> Meta Ads y TikTok Ads seguirán el mismo patrón (tabla propia + workflow de
+> n8n dinámico + endpoint `/api/*`) en cuanto tengan credenciales.
 
 ## Visibilidad de fuentes
 
