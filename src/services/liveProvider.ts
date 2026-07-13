@@ -4,9 +4,11 @@
  * credenciales del cliente. Los secretos viven en el servidor, nunca en el
  * navegador.
  *
- * ⚠️ Los endpoints /api/* todavía no están implementados. Mientras no existan,
- * este proveedor devolverá un error claro (visible como estado de error en la
- * vista). Se irán implementando plataforma por plataforma.
+ * Las integraciones se activan una a una. Mientras un endpoint concreto no
+ * exista todavía (404), esa vista cae automáticamente a los datos de mentira
+ * en vez de mostrar un error — así se puede activar VITE_DATA_MODE=live para
+ * todo el dashboard aunque, de momento, solo Google Ads tenga datos reales.
+ * Un error real del servidor (500, fallo de red, etc.) sí se muestra.
  */
 import type {
   DataProvider,
@@ -16,6 +18,9 @@ import type {
   SocialData,
   SettingsData,
 } from './types'
+import { mockProvider } from './mockProvider'
+
+class EndpointNotImplemented extends Error {}
 
 async function fetchJson<T>(endpoint: string, client: string): Promise<T> {
   const url = `${endpoint}?client=${encodeURIComponent(client)}`
@@ -27,6 +32,9 @@ async function fetchJson<T>(endpoint: string, client: string): Promise<T> {
       `No se pudo conectar con ${endpoint}. ¿Está desplegada la función de servidor?`,
     )
   }
+  if (res.status === 404) {
+    throw new EndpointNotImplemented()
+  }
   if (!res.ok) {
     throw new Error(
       `El endpoint ${endpoint} respondió ${res.status}. Revisa las credenciales de la fuente en Configuración.`,
@@ -35,11 +43,32 @@ async function fetchJson<T>(endpoint: string, client: string): Promise<T> {
   return (await res.json()) as T
 }
 
+/** Si el endpoint aún no existe, usa el mock correspondiente; cualquier otro
+ * error se propaga tal cual para mostrarse en la vista. */
+async function withMockFallback<T>(promise: Promise<T>, mockFn: () => Promise<T>): Promise<T> {
+  try {
+    return await promise
+  } catch (e) {
+    if (e instanceof EndpointNotImplemented) return mockFn()
+    throw e
+  }
+}
+
 export const liveProvider: DataProvider = {
   mode: 'live',
-  getOverview: (client) => fetchJson<OverviewData>('/api/overview', client),
+  getOverview: (client) =>
+    withMockFallback(fetchJson<OverviewData>('/api/overview', client), () =>
+      mockProvider.getOverview(client),
+    ),
   getPaid: (client) => fetchJson<PaidData>('/api/paid', client),
-  getSeo: (client) => fetchJson<SeoData>('/api/seo', client),
-  getSocial: (client) => fetchJson<SocialData>('/api/social', client),
-  getSettings: (client) => fetchJson<SettingsData>('/api/settings', client),
+  getSeo: (client) =>
+    withMockFallback(fetchJson<SeoData>('/api/seo', client), () => mockProvider.getSeo(client)),
+  getSocial: (client) =>
+    withMockFallback(fetchJson<SocialData>('/api/social', client), () =>
+      mockProvider.getSocial(client),
+    ),
+  getSettings: (client) =>
+    withMockFallback(fetchJson<SettingsData>('/api/settings', client), () =>
+      mockProvider.getSettings(client),
+    ),
 }

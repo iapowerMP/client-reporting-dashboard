@@ -5,6 +5,9 @@
  * POST { name, sector?, website? } -> crea un cliente nuevo, generando un
  *         slug único a partir del nombre, y lo devuelve. Ese slug es el que
  *         identifica al cliente en la URL (/c/<slug>/...).
+ * PATCH { client, name?, sector?, website? } -> actualiza los datos del
+ *         cliente (identificado por su slug actual). El slug nunca cambia
+ *         aquí, para no romper la URL ya compartida/guardada en favoritos.
  */
 
 function slugify(name: string): string {
@@ -82,6 +85,46 @@ export default async function handler(req: any, res: any) {
       res.status(200).json({ client: row })
     } catch {
       res.status(502).json({ error: 'No se pudo crear el cliente en Supabase.' })
+    }
+    return
+  }
+
+  if (req.method === 'PATCH') {
+    const { client: slug, name, sector, website } = req.body ?? {}
+    if (!slug || typeof slug !== 'string') {
+      res.status(400).json({ error: 'Falta el campo client (slug del cliente).' })
+      return
+    }
+
+    const updates: Record<string, string | null> = {}
+    if (typeof name === 'string' && name.trim()) updates.name = name.trim()
+    if (typeof sector === 'string') updates.sector = sector.trim() || null
+    if (typeof website === 'string') updates.website = website.trim() || null
+
+    if (Object.keys(updates).length === 0) {
+      res.status(400).json({ error: 'No hay ningún campo que actualizar.' })
+      return
+    }
+
+    try {
+      const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}`
+      const resp = await fetch(url, {
+        method: 'PATCH',
+        headers: { ...headers, Prefer: 'return=representation' },
+        body: JSON.stringify(updates),
+      })
+      if (!resp.ok) {
+        res.status(502).json({ error: `Supabase respondió ${resp.status} al actualizar el cliente.` })
+        return
+      }
+      const [row] = await resp.json()
+      if (!row) {
+        res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+        return
+      }
+      res.status(200).json({ client: row })
+    } catch {
+      res.status(502).json({ error: 'No se pudo actualizar el cliente en Supabase.' })
     }
     return
   }

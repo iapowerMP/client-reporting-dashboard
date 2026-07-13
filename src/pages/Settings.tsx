@@ -201,6 +201,33 @@ export default function Settings() {
     }
   }
 
+  const clientNameRef = useRef<HTMLInputElement>(null)
+  const clientSectorRef = useRef<HTMLInputElement>(null)
+  const clientWebsiteRef = useRef<HTMLInputElement>(null)
+  const [savingClient, setSavingClient] = useState(false)
+
+  const handleSaveClient = async () => {
+    setSavingClient(true)
+    try {
+      const resp = await fetch('/api/clients', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client: clientSlug,
+          name: clientNameRef.current?.value ?? '',
+          sector: clientSectorRef.current?.value ?? '',
+          website: clientWebsiteRef.current?.value ?? '',
+        }),
+      })
+      if (!resp.ok) throw new Error()
+      showToast('Guardado correctamente')
+    } catch {
+      showToast('No se pudo guardar. Revisa la configuración del servidor (Supabase).')
+    } finally {
+      setSavingClient(false)
+    }
+  }
+
   const handleSyncAll = () => {
     showToast('Sincronización iniciada para todas las plataformas')
   }
@@ -225,9 +252,9 @@ export default function Settings() {
       {/* Datos del cliente */}
       <ChartCard title="Datos del cliente">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Nombre del cliente" defaultValue={client.nombre} />
-          <Field label="Sector" defaultValue={client.sector} />
-          <Field label="Sitio web" defaultValue={client.sitioWeb} />
+          <Field label="Nombre del cliente" defaultValue={client.nombre} inputRef={clientNameRef} />
+          <Field label="Sector" defaultValue={client.sector} inputRef={clientSectorRef} />
+          <Field label="Sitio web" defaultValue={client.sitioWeb} inputRef={clientWebsiteRef} />
           <div>
             <span className="mb-1.5 block text-xs font-medium text-text-secondary">
               Logo
@@ -239,8 +266,12 @@ export default function Settings() {
           </div>
         </div>
         <div className="mt-5">
-          <button className="rounded-control border border-border bg-base px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/5">
-            Guardar cambios
+          <button
+            onClick={handleSaveClient}
+            disabled={savingClient}
+            className="rounded-control border border-border bg-base px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
+          >
+            {savingClient ? 'Guardando...' : 'Guardar cambios'}
           </button>
         </div>
       </ChartCard>
