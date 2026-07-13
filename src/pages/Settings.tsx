@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { RefreshCw, UploadCloud, Loader2 } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import DataTable, { type Column } from '@/components/shared/DataTable'
@@ -30,10 +30,12 @@ function Field({
   label,
   defaultValue,
   placeholder,
+  inputRef,
 }: {
   label: string
   defaultValue?: string
   placeholder?: string
+  inputRef?: React.RefObject<HTMLInputElement>
 }) {
   return (
     <label className="block">
@@ -41,6 +43,7 @@ function Field({
         {label}
       </span>
       <input
+        ref={inputRef}
         type="text"
         defaultValue={defaultValue}
         placeholder={placeholder}
@@ -58,13 +61,19 @@ function ConnectionCard({
   onSync,
   visible,
   onToggleVisible,
+  saving,
+  onSaveExternalId,
 }: {
   conn: Connection
   syncing: boolean
   onSync: () => void
   visible: boolean
   onToggleVisible: (value: boolean) => void
+  saving: boolean
+  onSaveExternalId: (value: string) => void
 }) {
+  const inputRef = useRef<HTMLInputElement>(null)
+
   return (
     <div className="rounded-card border border-border bg-card p-5">
       <div className="flex items-center justify-between">
@@ -73,7 +82,12 @@ function ConnectionCard({
       </div>
 
       <div className="mt-4">
-        <Field label={conn.label} defaultValue={conn.value} placeholder={conn.placeholder} />
+        <Field
+          label={conn.label}
+          defaultValue={conn.value}
+          placeholder={conn.placeholder}
+          inputRef={inputRef}
+        />
       </div>
 
       <div className="mt-3 min-h-[18px] text-xs">
@@ -89,8 +103,12 @@ function ConnectionCard({
       </div>
 
       <div className="mt-4 flex items-center gap-2">
-        <button className="rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5">
-          Guardar
+        <button
+          onClick={() => onSaveExternalId(inputRef.current?.value ?? '')}
+          disabled={saving}
+          className="rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
+        >
+          {saving ? 'Guardando...' : 'Guardar'}
         </button>
         <button
           onClick={onSync}
@@ -154,10 +172,28 @@ export default function Settings() {
   const { data, loading, error } = useAsyncData(() => getProvider().getSettings())
   const [toast, setToast] = useState<string | null>(null)
   const [syncingIds, setSyncingIds] = useState<string[]>([])
+  const [savingIds, setSavingIds] = useState<string[]>([])
 
   const showToast = (message: string) => {
     setToast(message)
     window.setTimeout(() => setToast(null), 3000)
+  }
+
+  const handleSaveExternalId = async (platform: string, externalId: string) => {
+    setSavingIds((prev) => [...prev, platform])
+    try {
+      const resp = await fetch('/api/data-sources', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform, externalId }),
+      })
+      if (!resp.ok) throw new Error()
+      showToast('Guardado correctamente')
+    } catch {
+      showToast('No se pudo guardar. Revisa la configuración del servidor (Supabase).')
+    } finally {
+      setSavingIds((prev) => prev.filter((x) => x !== platform))
+    }
   }
 
   const handleSyncAll = () => {
@@ -226,6 +262,8 @@ export default function Settings() {
               onSync={() => handleSyncOne(conn.id)}
               visible={isVisible(conn.id)}
               onToggleVisible={(v) => setVisible(conn.id, v)}
+              saving={savingIds.includes(conn.id)}
+              onSaveExternalId={(value) => handleSaveExternalId(conn.id, value)}
             />
           ))}
         </div>
