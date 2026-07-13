@@ -40,6 +40,13 @@
  * secreto): la URL completa (con el token real) se guarda solo en la
  * variable de entorno de Vercel N8N_GADS_SYNC_WEBHOOK_URL, nunca en el repo.
  *
+ * Cada fila de gads_campaign_daily se etiqueta con la cuenta (customer_id)
+ * que la originó. Si un cliente cambia de cuenta de Google Ads, /api/paid
+ * filtra siempre por la cuenta actualmente guardada en data_sources, así que
+ * los datos de la cuenta anterior dejan de mostrarse sin necesidad de
+ * borrarlos (basta con volver a sincronizar para que las filas nuevas queden
+ * etiquetadas con la cuenta correcta).
+ *
  * Nota: apiVersion está en "v24" (vigente a jul-2026; Google descontinuó v17-v19).
  * Revisar periódicamente en developers.google.com/google-ads/api/docs/release-notes.
  * La paginación no está implementada (suficiente para <10k filas / 30 días por
@@ -173,6 +180,7 @@ const transform = node({
       mode: 'runOnceForEachItem',
       language: 'javaScript',
       jsCode: `const clientId = $('Config compartida').item.json.client_id;
+const customerId = $('Config compartida').item.json.customer_id;
 const resp = $json || {};
 const results = resp.results || [];
 const esc = (v) => "'" + String(v).replace(/'/g, "''") + "'";
@@ -183,6 +191,7 @@ const rows = results.map((r) => {
   const m = r.metrics || {};
   return {
     client_id: clientId,
+    customer_id: customerId,
     date: s.date,
     campaign_id: String(c.id),
     campaign_name: c.name || '',
@@ -201,12 +210,12 @@ if (rows.length === 0) {
 const values = rows.map((x) =>
   '(' + esc(x.client_id) + '::uuid, ' + esc(x.date) + '::date, ' + esc(x.campaign_id) + ', ' +
   esc(x.campaign_name) + ', ' + esc(x.status) + ', ' + x.cost + ', ' + x.impressions + ', ' +
-  x.clicks + ', ' + x.conversions + ', ' + x.conversions_value + ')'
+  x.clicks + ', ' + x.conversions + ', ' + x.conversions_value + ', ' + esc(x.customer_id) + ')'
 ).join(',');
 const upsertQuery =
-  'INSERT INTO gads_campaign_daily (client_id, date, campaign_id, campaign_name, status, cost, impressions, clicks, conversions, conversions_value) VALUES ' +
+  'INSERT INTO gads_campaign_daily (client_id, date, campaign_id, campaign_name, status, cost, impressions, clicks, conversions, conversions_value, customer_id) VALUES ' +
   values +
-  ' ON CONFLICT (client_id, date, campaign_id) DO UPDATE SET campaign_name = EXCLUDED.campaign_name, status = EXCLUDED.status, cost = EXCLUDED.cost, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, updated_at = now();';
+  ' ON CONFLICT (client_id, date, campaign_id) DO UPDATE SET campaign_name = EXCLUDED.campaign_name, status = EXCLUDED.status, cost = EXCLUDED.cost, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, customer_id = EXCLUDED.customer_id, updated_at = now();';
 return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: rows.length } };`,
     },
     position: [1120, 300],

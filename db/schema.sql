@@ -56,6 +56,8 @@ create table if not exists data_sources (
 create table if not exists gads_campaign_daily (
   id                 bigint generated always as identity primary key,
   client_id          uuid not null references clients(id) on delete cascade,
+  customer_id        text,                    -- cuenta de Google Ads que originó la fila; permite
+                                               -- ignorar datos de una cuenta anterior si el cliente cambia de ID
   date               date not null,
   campaign_id        text not null,
   campaign_name      text not null,
