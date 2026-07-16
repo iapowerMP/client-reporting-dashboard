@@ -95,7 +95,7 @@ async function handleRequest(req: any, res: any) {
       return
     }
     try {
-      const url = `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&select=platform,external_id,status,last_sync`
+      const url = `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&select=platform,external_id,status,last_sync,auth_method`
       const resp = await fetch(url, { headers })
       if (!resp.ok) {
         res.status(502).json({ error: `Supabase respondió ${resp.status} al leer data_sources.` })
@@ -146,7 +146,18 @@ async function handleRequest(req: any, res: any) {
         method: 'POST',
         headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=representation' },
         body: JSON.stringify([
-          { client_id: client.id, platform, external_id: externalId, status: 'conectado' },
+          {
+            client_id: client.id,
+            platform,
+            external_id: externalId,
+            status: 'conectado',
+            // Guardar el ID a mano siempre vuelve al modo de conexión por API,
+            // aunque antes estuviera conectado por inicio de sesión (su token
+            // deja de usarse).
+            auth_method: 'api',
+            oauth_access_token: null,
+            oauth_token_expires_at: null,
+          },
         ]),
       })
       if (!resp.ok) {
