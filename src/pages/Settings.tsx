@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
-import { useNavigate, useOutletContext, useParams } from 'react-router-dom'
-import { UploadCloud, Loader2 } from 'lucide-react'
+import { useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom'
+import { UploadCloud, Loader2, Facebook } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import StatusBadge from '@/components/shared/StatusBadge'
 import Toggle from '@/components/shared/Toggle'
 import { useReportConfig } from '@/lib/reportConfig'
 import { CONNECTION_CATALOG, type StatusVariant } from '@/data/mockData'
 import { type useClientInfo } from '@/lib/useClientInfo'
-import { authHeaders } from '@/lib/authToken'
+import { authHeaders, getStoredToken } from '@/lib/authToken'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024
@@ -18,11 +18,18 @@ const MAX_LOGO_BYTES = 2 * 1024 * 1024
  * claridad en vez de simular una conexión que no existe. */
 const BUILT_INTEGRATIONS = new Set(['google-ads', 'meta-ads'])
 
+/** Plataformas que, además de la conexión manual por API, admiten "iniciar
+ * sesión" (OAuth): el propio PM/cliente concede acceso a las cuentas que él
+ * mismo administra, sin depender de que estén compartidas con nuestro
+ * Business Manager. */
+const OAUTH_CAPABLE = new Set(['meta-ads'])
+
 interface DataSourceRow {
   platform: string
   external_id: string | null
   status: string
   last_sync: string | null
+  auth_method?: string
 }
 
 interface RealConnection {
@@ -34,6 +41,8 @@ interface RealConnection {
   status: StatusVariant
   statusNote: string
   canSync: boolean
+  oauthCapable: boolean
+  authMethod: 'api' | 'oauth'
 }
 
 function formatLastSync(iso: string | null): string {
@@ -53,6 +62,8 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
   return CONNECTION_CATALOG.map((entry) => {
     const row = byPlatform.get(entry.id)
     const value = row?.external_id ?? ''
+    const oauthCapable = OAUTH_CAPABLE.has(entry.id)
+    const authMethod: 'api' | 'oauth' = row?.auth_method === 'oauth' ? 'oauth' : 'api'
     if (!BUILT_INTEGRATIONS.has(entry.id)) {
       return {
         ...entry,
@@ -60,15 +71,20 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
         status: 'Próximamente',
         statusNote: 'Integración en desarrollo — todavía no sincroniza datos.',
         canSync: false,
+        oauthCapable,
+        authMethod,
       }
     }
     if (value) {
+      const via = authMethod === 'oauth' ? ' · conectado con inicio de sesión de Facebook' : ''
       return {
         ...entry,
         value,
         status: 'Conectado',
-        statusNote: formatLastSync(row?.last_sync ?? null),
+        statusNote: `${formatLastSync(row?.last_sync ?? null)}${via}`,
         canSync: true,
+        oauthCapable,
+        authMethod,
       }
     }
     return {
@@ -77,6 +93,8 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
       status: 'Pendiente',
       statusNote: 'Guarda el identificador de la cuenta para activar la sincronización.',
       canSync: false,
+      oauthCapable,
+      authMethod,
     }
   })
 }
@@ -98,6 +116,91 @@ function Toast({ message }: { message: string }) {
       <div className="flex items-center gap-2">
         <span className="h-2 w-2 rounded-full bg-accent" />
         {message}
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------ Selector de cuenta (Meta) ----------------------- */
+
+interface MetaOauthAccount {
+  id: string
+  name: string
+  active: boolean
+}
+
+function MetaAccountPicker({
+  loading,
+  error,
+  accounts,
+  selected,
+  onSelect,
+  confirming,
+  onConfirm,
+  onCancel,
+}: {
+  loading: boolean
+  error: string | null
+  accounts: MetaOauthAccount[] | null
+  selected: string
+  onSelect: (id: string) => void
+  confirming: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-md rounded-card border border-border bg-card p-5">
+        <h3 className="text-sm font-semibold text-white">Elige la cuenta de Meta Ads</h3>
+        <p className="mt-1 text-xs text-text-secondary">
+          Son las cuentas publicitarias a las que tiene acceso la cuenta de Facebook con la que has iniciado sesión.
+        </p>
+
+        <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
+          {loading && <p className="py-6 text-center text-sm text-text-secondary">Cargando cuentas...</p>}
+          {error && <p className="py-6 text-center text-sm text-negative">{error}</p>}
+          {!loading && !error && accounts?.length === 0 && (
+            <p className="py-6 text-center text-sm text-text-secondary">
+              Esa cuenta de Facebook no administra ninguna cuenta publicitaria.
+            </p>
+          )}
+          {!loading &&
+            !error &&
+            accounts?.map((acc) => (
+              <label
+                key={acc.id}
+                className="flex cursor-pointer items-center justify-between rounded-control border border-border bg-base px-3 py-2 text-sm text-text-primary hover:border-accent/60"
+              >
+                <span className="flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="meta-account"
+                    checked={selected === acc.id}
+                    onChange={() => onSelect(acc.id)}
+                  />
+                  {acc.name}
+                  <span className="text-xs text-text-secondary">({acc.id})</span>
+                </span>
+                {!acc.active && <span className="text-xs text-text-secondary">Inactiva</span>}
+              </label>
+            ))}
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={!selected || confirming}
+            className="rounded-control bg-accent px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-60"
+          >
+            {confirming ? 'Conectando...' : 'Conectar esta cuenta'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -142,6 +245,7 @@ function ConnectionCard({
   onSaveExternalId,
   syncing,
   onSync,
+  onConnectFacebook,
 }: {
   conn: RealConnection
   visible: boolean
@@ -150,6 +254,7 @@ function ConnectionCard({
   onSaveExternalId: (value: string) => void
   syncing: boolean
   onSync: () => void
+  onConnectFacebook: () => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -199,6 +304,24 @@ function ConnectionCard({
         )}
       </div>
 
+      {/* Conexión alternativa por inicio de sesión (en vez de escribir el ID
+          a mano): el PM/cliente concede acceso a sus propias cuentas, sin
+          depender de que estén compartidas con nuestro Business Manager. */}
+      {conn.oauthCapable && (
+        <div className="mt-3 border-t border-border pt-3">
+          <p className="mb-2 text-xs text-text-secondary">
+            — o conecta iniciando sesión con la cuenta que administra esta cuenta publicitaria —
+          </p>
+          <button
+            onClick={onConnectFacebook}
+            className="inline-flex items-center gap-2 rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5"
+          >
+            <Facebook className="h-4 w-4" />
+            {conn.authMethod === 'oauth' ? 'Reconectar con Facebook' : 'Conectar con Facebook'}
+          </button>
+        </div>
+      )}
+
       {/* Visibilidad en el informe */}
       <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
         <span className="text-xs text-text-secondary">
@@ -219,6 +342,7 @@ function ConnectionCard({
 export default function Settings() {
   const { clientSlug = '' } = useParams()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const clientInfo = useOutletContext<ReturnType<typeof useClientInfo>>()
   const { isVisible, setVisible } = useReportConfig()
   const [sources, setSources] = useState<DataSourceRow[] | null>(null)
@@ -295,6 +419,68 @@ export default function Settings() {
       showToast(e instanceof Error && e.message ? e.message : 'No se pudo iniciar la sincronización.')
     } finally {
       setSyncingIds((prev) => prev.filter((x) => x !== platform))
+    }
+  }
+
+  /* ------------------- Conexión de Meta Ads por inicio de sesión ------------------- */
+
+  const handleConnectFacebook = () => {
+    const token = getStoredToken(clientSlug)
+    const params = new URLSearchParams({ client: clientSlug })
+    if (token) params.set('token', token)
+    window.location.href = `/api/oauth-meta-start?${params.toString()}`
+  }
+
+  const showingMetaPicker = searchParams.get('meta_oauth') === 'picking'
+  const [metaAccounts, setMetaAccounts] = useState<{ id: string; name: string; active: boolean }[] | null>(null)
+  const [metaAccountsLoading, setMetaAccountsLoading] = useState(false)
+  const [metaAccountsError, setMetaAccountsError] = useState<string | null>(null)
+  const [selectedMetaAccount, setSelectedMetaAccount] = useState('')
+  const [finalizingMeta, setFinalizingMeta] = useState(false)
+
+  useEffect(() => {
+    if (!showingMetaPicker) return
+    setMetaAccountsLoading(true)
+    setMetaAccountsError(null)
+    fetch(`/api/oauth-meta-accounts?client=${encodeURIComponent(clientSlug)}`)
+      .then(async (resp) => {
+        const body = await resp.json().catch(() => ({}))
+        if (!resp.ok) throw new Error(body?.error || 'No se pudieron cargar las cuentas de Meta.')
+        setMetaAccounts(body.accounts ?? [])
+      })
+      .catch((e) => setMetaAccountsError(e instanceof Error ? e.message : 'No se pudieron cargar las cuentas de Meta.'))
+      .finally(() => setMetaAccountsLoading(false))
+    // Se ejecuta una sola vez al detectar el parámetro de vuelta del login.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showingMetaPicker])
+
+  const closeMetaPicker = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('meta_oauth')
+    setSearchParams(next, { replace: true })
+    setMetaAccounts(null)
+    setMetaAccountsError(null)
+    setSelectedMetaAccount('')
+  }
+
+  const handleConfirmMetaAccount = async () => {
+    if (!selectedMetaAccount) return
+    setFinalizingMeta(true)
+    try {
+      const resp = await fetch('/api/oauth-meta-finalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        body: JSON.stringify({ client: clientSlug, accountId: selectedMetaAccount }),
+      })
+      const body = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(body?.error)
+      closeMetaPicker()
+      await loadSources()
+      showToast('Meta Ads conectado con inicio de sesión de Facebook')
+    } catch (e) {
+      setMetaAccountsError(e instanceof Error && e.message ? e.message : 'No se pudo completar la conexión.')
+    } finally {
+      setFinalizingMeta(false)
     }
   }
 
@@ -513,6 +699,7 @@ export default function Settings() {
               onSaveExternalId={(value) => handleSaveExternalId(conn.id, value)}
               syncing={syncingIds.includes(conn.id)}
               onSync={() => handleSync(conn.id)}
+              onConnectFacebook={handleConnectFacebook}
             />
           ))}
         </div>
@@ -526,6 +713,19 @@ export default function Settings() {
       </ChartCard>
 
       {toast && <Toast message={toast} />}
+
+      {showingMetaPicker && (
+        <MetaAccountPicker
+          loading={metaAccountsLoading}
+          error={metaAccountsError}
+          accounts={metaAccounts}
+          selected={selectedMetaAccount}
+          onSelect={setSelectedMetaAccount}
+          confirming={finalizingMeta}
+          onConfirm={handleConfirmMetaAccount}
+          onCancel={closeMetaPicker}
+        />
+      )}
     </div>
   )
 }

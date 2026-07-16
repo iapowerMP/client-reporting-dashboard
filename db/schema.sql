@@ -37,14 +37,22 @@ on conflict (id) do nothing;
 --  de n8n / variables de entorno del servidor.
 -- ----------------------------------------------------------------------------
 create table if not exists data_sources (
-  id           uuid primary key default gen_random_uuid(),
-  client_id    uuid not null references clients(id) on delete cascade,
-  platform     text not null,               -- 'google-ads', 'meta-ads', 'ga4'...
-  external_id  text,                         -- customer_id, property_id, etc.
-  status       text not null default 'pendiente',  -- conectado | pendiente | error
-  visible      boolean not null default true,      -- mostrar en el informe
-  last_sync    timestamptz,
-  config       jsonb not null default '{}'::jsonb,
+  id                     uuid primary key default gen_random_uuid(),
+  client_id              uuid not null references clients(id) on delete cascade,
+  platform               text not null,               -- 'google-ads', 'meta-ads', 'ga4'...
+  external_id            text,                         -- customer_id, property_id, etc.
+  status                 text not null default 'pendiente',  -- conectado | pendiente | error
+  visible                boolean not null default true,      -- mostrar en el informe
+  last_sync              timestamptz,
+  config                 jsonb not null default '{}'::jsonb,
+  -- Método de conexión: 'api' (ID de cuenta + credencial compartida del
+  -- System User) u 'oauth' (el propio PM/cliente inicia sesión con Facebook
+  -- y concede acceso a las cuentas que él mismo administra, sin necesitar
+  -- estar en nuestro Business Manager). El token de oauth es de ESE usuario,
+  -- no compartido entre clientes.
+  auth_method            text not null default 'api',
+  oauth_access_token     text,                         -- solo si auth_method = 'oauth'
+  oauth_token_expires_at timestamptz,
   unique (client_id, platform)
 );
 
