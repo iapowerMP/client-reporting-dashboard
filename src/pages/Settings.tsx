@@ -16,26 +16,27 @@ const MAX_LOGO_BYTES = 2 * 1024 * 1024
  * n8n/Supabase). El resto del catálogo existe para poder guardar ya su ID de
  * cuenta, pero no sincroniza nada todavía — el estado debe decirlo con
  * claridad en vez de simular una conexión que no existe. */
-const BUILT_INTEGRATIONS = new Set(['google-ads', 'meta-ads', 'ga4'])
+const BUILT_INTEGRATIONS = new Set(['google-ads', 'meta-ads', 'ga4', 'gsc'])
 
 /** Plataformas que, además de la conexión manual por API, admiten "iniciar
  * sesión" (OAuth): el propio PM/cliente concede acceso a las cuentas que él
  * mismo administra, sin depender de que estén compartidas con nuestro
  * Business Manager. */
-const OAUTH_CAPABLE = new Set(['meta-ads', 'ga4'])
+const OAUTH_CAPABLE = new Set(['meta-ads', 'ga4', 'gsc'])
 
 /** Plataformas que SOLO admiten inicio de sesión (sin campo manual de ID). */
-const OAUTH_ONLY = new Set(['ga4'])
+const OAUTH_ONLY = new Set(['ga4', 'gsc'])
 
-type OauthPlatform = 'meta' | 'ga4'
+type OauthPlatform = 'meta' | 'ga4' | 'gsc'
 
 /** Un flujo de "iniciar sesión" por plataforma: sus endpoints y el nombre
- * del campo que espera /api/oauth-<platform>-finalize. */
-// Cada plataforma vive en un único archivo /api (?action=...) para no
-// superar el límite de Serverless Functions del plan de Vercel.
+ * del campo que espera el finalize. Meta vive en su propio archivo; todas
+ * las integraciones de Google comparten /api/oauth-google (?service=...)
+ * — un único archivo por proveedor para no superar el límite de Serverless
+ * Functions del plan de Vercel. */
 const OAUTH_CONFIG: Record<
   OauthPlatform,
-  { startUrl: string; accountsUrl: string; finalizeUrl: string; finalizeField: string; providerLabel: 'Facebook' | 'Google' }
+  { startUrl: string; accountsUrl: string; finalizeUrl: string; finalizeField: string; finalizeExtra?: Record<string, string>; providerLabel: 'Facebook' | 'Google' }
 > = {
   meta: {
     startUrl: '/api/oauth-meta?action=start',
@@ -45,10 +46,19 @@ const OAUTH_CONFIG: Record<
     providerLabel: 'Facebook',
   },
   ga4: {
-    startUrl: '/api/oauth-ga4?action=start',
-    accountsUrl: '/api/oauth-ga4?action=accounts',
-    finalizeUrl: '/api/oauth-ga4?action=finalize',
-    finalizeField: 'propertyId',
+    startUrl: '/api/oauth-google?service=ga4&action=start',
+    accountsUrl: '/api/oauth-google?service=ga4&action=accounts',
+    finalizeUrl: '/api/oauth-google?action=finalize',
+    finalizeField: 'accountId',
+    finalizeExtra: { service: 'ga4' },
+    providerLabel: 'Google',
+  },
+  gsc: {
+    startUrl: '/api/oauth-google?service=gsc&action=start',
+    accountsUrl: '/api/oauth-google?service=gsc&action=accounts',
+    finalizeUrl: '/api/oauth-google?action=finalize',
+    finalizeField: 'accountId',
+    finalizeExtra: { service: 'gsc' },
     providerLabel: 'Google',
   },
 }
@@ -57,6 +67,7 @@ const OAUTH_CONFIG: Record<
 const OAUTH_PLATFORM_BY_CONNECTION: Record<string, OauthPlatform> = {
   'meta-ads': 'meta',
   ga4: 'ga4',
+  gsc: 'gsc',
 }
 
 interface DataSourceRow {
@@ -493,10 +504,17 @@ export default function Settings() {
     window.location.href = url.toString()
   }
 
-  // Qué flujo de login está "recogiendo" al usuario tras volver de Facebook/Google
-  // (cada uno redirige con su propio query param: meta_oauth / ga4_oauth).
+  // Qué flujo de login está "recogiendo" al usuario tras volver de Facebook/Google:
+  // Meta redirige con ?meta_oauth=picking; todas las integraciones de Google
+  // comparten /api/oauth-google y redirigen con ?google_oauth=<service>.
   const activeOauthPlatform: OauthPlatform | null =
-    searchParams.get('meta_oauth') === 'picking' ? 'meta' : searchParams.get('ga4_oauth') === 'picking' ? 'ga4' : null
+    searchParams.get('meta_oauth') === 'picking'
+      ? 'meta'
+      : searchParams.get('google_oauth') === 'ga4'
+        ? 'ga4'
+        : searchParams.get('google_oauth') === 'gsc'
+          ? 'gsc'
+          : null
 
   const [oauthAccounts, setOauthAccounts] = useState<OauthAccount[] | null>(null)
   const [oauthAccountsLoading, setOauthAccountsLoading] = useState(false)
@@ -525,7 +543,7 @@ export default function Settings() {
   const closeOauthPicker = () => {
     const next = new URLSearchParams(searchParams)
     next.delete('meta_oauth')
-    next.delete('ga4_oauth')
+    next.delete('google_oauth')
     setSearchParams(next, { replace: true })
     setOauthAccounts(null)
     setOauthAccountsError(null)
@@ -540,7 +558,7 @@ export default function Settings() {
       const resp = await fetch(cfg.finalizeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
-        body: JSON.stringify({ client: clientSlug, [cfg.finalizeField]: selectedOauthAccount }),
+        body: JSON.stringify({ client: clientSlug, [cfg.finalizeField]: selectedOauthAccount, ...cfg.finalizeExtra }),
       })
       const body = await resp.json().catch(() => ({}))
       if (!resp.ok) throw new Error(body?.error)
@@ -786,7 +804,9 @@ export default function Settings() {
 
       {activeOauthPlatform && (
         <OauthAccountPicker
-          platformLabel={activeOauthPlatform === 'meta' ? 'Meta Ads' : 'Google Analytics 4'}
+          platformLabel={
+            activeOauthPlatform === 'meta' ? 'Meta Ads' : activeOauthPlatform === 'ga4' ? 'Google Analytics 4' : 'Search Console'
+          }
           loading={oauthAccountsLoading}
           error={oauthAccountsError}
           accounts={oauthAccounts}

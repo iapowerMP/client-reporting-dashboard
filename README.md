@@ -62,9 +62,16 @@ Supabase (alimentado por n8n) — no existe ningún modo con datos inventados.
 Los endpoints (`/api/overview`, `/api/paid`, `/api/seo`, `/api/social`)
 consultan Supabase **desde el servidor** (nunca desde el navegador) y
 devuelven un JSON con la forma definida en `services/types.ts`. Las partes
-sin integración real todavía (Redes Sociales; Search Console y Semrush
-dentro de SEO) devuelven un estado vacío honesto en vez de cifras
-inventadas, hasta que se construyan.
+sin integración real todavía (Redes Sociales; Semrush dentro de SEO)
+devuelven un estado vacío honesto en vez de cifras inventadas, hasta que se
+construyan.
+
+> **Límite de Serverless Functions (plan Hobby de Vercel):** máximo 12 por
+> despliegue. Los endpoints con varios pasos relacionados (login OAuth,
+> panel de admin) se agrupan en un solo archivo con un parámetro `?action=`
+> en vez de un archivo por paso — revisa `api/oauth-meta.ts`,
+> `api/oauth-google.ts` y `api/admin.ts` como referencia antes de añadir un
+> archivo nuevo en `/api`.
 
 ### Credenciales por cliente
 
@@ -86,11 +93,13 @@ deben resolverse en el servidor; nunca se exponen en el navegador.
 >   (Ad Account ID + System User compartido de nuestro Business Manager) o
 >   inicio de sesión con Facebook (el PM/cliente conecta cualquier cuenta que
 >   administre, sin depender de nuestro BM).
-> - **GA4** — solo por inicio de sesión con Google: el PM/cliente conecta la
->   propiedad GA4 que administre.
-> - El resto (TikTok Ads, Search Console, Semrush, Instagram, Facebook,
->   TikTok, YouTube) todavía no tiene integración real; sus vistas muestran
->   un estado vacío honesto en vez de datos inventados.
+> - **GA4** y **Search Console** — solo por inicio de sesión con Google (sin
+>   modo API): el PM/cliente conecta la propiedad GA4 o el sitio verificado
+>   que administre. Comparten el mismo cliente OAuth de Google Cloud y el
+>   mismo endpoint (`/api/oauth-google`), cada una con su propio scope.
+> - El resto (TikTok Ads, Semrush, Instagram, Facebook, TikTok, YouTube)
+>   todavía no tiene integración real; sus vistas muestran un estado vacío
+>   honesto en vez de datos inventados.
 
 ## Visibilidad de fuentes
 
