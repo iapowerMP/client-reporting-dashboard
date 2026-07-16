@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import type { KpiData } from '@/data/mockData'
+import type { KpiData } from '@/data/catalog'
 
 interface KpiCardProps extends KpiData {
   /** Resalta la card con un borde de acento (usar con moderación). */

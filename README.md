@@ -22,9 +22,9 @@ src/
     shared/    KpiCard, ChartCard, DataTable, PlatformBadge, StatusBadge,
                Tabs, Toggle, ChartTooltip, AsyncState (Loading/ErrorState)
   pages/       ClientPicker, Overview, PaidMedia, Seo, Social, Settings
-  data/        mockData.ts  (datos ficticios, tipados)
+  data/        catalog.ts  (tipos, catálogos de pestañas/plataformas, sin datos inventados)
   lib/         utils.ts (formatters ES), reportConfig.tsx, useAsyncData.ts
-  services/    capa de datos conmutable (mock ↔ real)
+  services/    capa de datos tipada (llama a /api/*)
 api/           Vercel Functions: clients, data-sources, paid, overview...
 ```
 
@@ -48,36 +48,23 @@ pisarse.
   cliente, para que no se mezclen las de uno con las de otro en el mismo
   navegador.
 
-## Capa de datos (mock ↔ real)
+## Capa de datos
 
 Todas las vistas leen los datos a través de una **capa de servicios tipada** en
-`src/services`, en lugar de importar los datos directamente. Así, pasar de datos
-ficticios a datos reales no obliga a tocar las vistas.
+`src/services`, en lugar de importar datos directamente. Todo es real, vía
+Supabase (alimentado por n8n) — no existe ningún modo con datos inventados.
 
 - `types.ts` — interfaces de los "bundles" que consume cada vista y el contrato
-  `DataProvider` (métodos asíncronos, porque los datos reales llegan por red).
-- `mockProvider.ts` — devuelve los datos de `data/mockData.ts`.
-- `liveProvider.ts` — llama a endpoints server-side bajo `/api/*`.
-- `index.ts` — `getProvider()` elige el proveedor según `VITE_DATA_MODE`.
+  `DataProvider` (métodos asíncronos, porque los datos llegan por red).
+- `liveProvider.ts` — llama a los endpoints server-side bajo `/api/*`.
+- `index.ts` — `getProvider()` devuelve ese proveedor.
 
-### Cambiar a datos reales
-
-1. Definir la variable de entorno en Vercel (Project → Settings → Environment
-   Variables):
-
-   ```
-   VITE_DATA_MODE=live
-   ```
-
-2. Implementar los endpoints server-side (Vercel Functions) en `/api`:
-   `/api/overview`, `/api/paid`, `/api/seo`, `/api/social`, `/api/settings`.
-   Cada uno consulta la API de la plataforma correspondiente **desde el
-   servidor** (nunca desde el navegador) usando las credenciales del cliente, y
-   devuelve un JSON con la forma definida en `services/types.ts`.
-
-Mientras un endpoint no exista, esa vista mostrará un estado de error claro.
-El modo por defecto es `mock`, por lo que el dashboard funciona sin configurar
-nada.
+Los endpoints (`/api/overview`, `/api/paid`, `/api/seo`, `/api/social`)
+consultan Supabase **desde el servidor** (nunca desde el navegador) y
+devuelven un JSON con la forma definida en `services/types.ts`. Las partes
+sin integración real todavía (Redes Sociales; Search Console y Semrush
+dentro de SEO) devuelven un estado vacío honesto en vez de cifras
+inventadas, hasta que se construyan.
 
 ### Credenciales por cliente
 
@@ -88,25 +75,22 @@ cliente y el dashboard muestre sus datos reales. Los secretos (tokens/API keys)
 deben resolverse en el servidor; nunca se exponen en el navegador.
 
 > Estado actual: las tarjetas de Configuración ya existen y permiten activar o
-> desactivar cada fuente en el informe. La persistencia segura de credenciales y
-> las integraciones reales por plataforma se irán añadiendo una a una.
+> desactivar cada fuente en el informe. Cada integración real sigue el mismo
+> patrón: tabla propia en Supabase + workflow de n8n dinámico (multi-cliente,
+> sin tocar n8n al añadir un cliente) + su propio endpoint `/api/*`.
 >
-> **Google Ads** ya está integrado de extremo a extremo, y de forma
-> **multi-cliente**: el workflow de n8n (`n8n/google-ads-ingest.workflow.ts`)
-> lee en cada ejecución qué clientes tienen un Customer ID guardado en la
-> tabla `data_sources` y hace ingesta para todos ellos, sin que haya que
-> tocar n8n al añadir un cliente nuevo. Un project manager solo necesita:
->
-> 1. Ir a `/` y crear el cliente (o pedir que se lo creen) — obtiene su URL
->    fija `/c/<slug>`.
-> 2. Ir a **`/c/<slug>/settings` → Google Ads**, pegar el Customer ID de su
->    cliente y pulsar "Guardar" — esto llama a `/api/data-sources`, que lo
->    escribe en Supabase. El developer token, el Client ID/Secret de OAuth y
->    el acceso vía MCC son compartidos y ya están configurados en n8n; el PM
->    nunca los toca, ni toca Vercel.
->
-> Meta Ads y TikTok Ads seguirán el mismo patrón (tabla propia + workflow de
-> n8n dinámico + endpoint `/api/*`) en cuanto tengan credenciales.
+> - **Google Ads** — modo API: el PM pega el Customer ID de su cliente en
+>   Configuración; el acceso vía MCC y las credenciales OAuth son
+>   compartidas y ya están configuradas en n8n.
+> - **Meta Ads** — admite dos modos, coexistentes en Configuración: API
+>   (Ad Account ID + System User compartido de nuestro Business Manager) o
+>   inicio de sesión con Facebook (el PM/cliente conecta cualquier cuenta que
+>   administre, sin depender de nuestro BM).
+> - **GA4** — solo por inicio de sesión con Google: el PM/cliente conecta la
+>   propiedad GA4 que administre.
+> - El resto (TikTok Ads, Search Console, Semrush, Instagram, Facebook,
+>   TikTok, YouTube) todavía no tiene integración real; sus vistas muestran
+>   un estado vacío honesto en vez de datos inventados.
 
 ## Visibilidad de fuentes
 

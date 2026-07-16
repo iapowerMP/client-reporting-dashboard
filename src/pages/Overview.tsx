@@ -26,7 +26,7 @@ import {
   PAID_TAB_TO_CONNECTION,
   SEO_TAB_TO_CONNECTION,
   SOCIAL_TAB_TO_CONNECTION,
-} from '@/data/mockData'
+} from '@/data/catalog'
 
 const SERVICIO_TO_CATEGORY: Record<string, SummaryCard['key']> = {
   'Paid Media': 'paid',

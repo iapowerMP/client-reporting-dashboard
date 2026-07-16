@@ -14,7 +14,7 @@ import {
   PAID_TAB_TO_CONNECTION,
   SEO_TAB_TO_CONNECTION,
   SOCIAL_TAB_TO_CONNECTION,
-} from '@/data/mockData'
+} from '@/data/catalog'
 
 type Category = 'paid' | 'seo' | 'social'
 
