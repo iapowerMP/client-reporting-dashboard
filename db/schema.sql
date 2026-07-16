@@ -142,6 +142,48 @@ create index if not exists idx_ga4_daily_client_date
   on ga4_daily (client_id, date);
 
 -- ----------------------------------------------------------------------------
+--  Search Console — dos tablas porque la Search Analytics API se consulta
+--  por separado según la dimensión que interese (query o página); combinarlas
+--  en una sola tabla mezclaría ambas dimensiones en la misma fila. site_url
+--  identifica la propiedad verificada (permite ignorar datos de una
+--  propiedad anterior si el cliente cambia de sitio, igual que property_id
+--  en GA4). position es la posición media ponderada por impresiones.
+-- ----------------------------------------------------------------------------
+create table if not exists gsc_query_daily (
+  id            bigint generated always as identity primary key,
+  client_id     uuid not null references clients(id) on delete cascade,
+  site_url      text,                    -- "https://dominio.com/" o "sc-domain:dominio.com"
+  date          date not null,
+  query         text not null,
+  clicks        bigint not null default 0,
+  impressions   bigint not null default 0,
+  ctr           numeric(6,4) not null default 0,
+  position      numeric(6,2) not null default 0,
+  updated_at    timestamptz not null default now(),
+  unique (client_id, date, query)
+);
+
+create index if not exists idx_gsc_query_daily_client_date
+  on gsc_query_daily (client_id, date);
+
+create table if not exists gsc_page_daily (
+  id            bigint generated always as identity primary key,
+  client_id     uuid not null references clients(id) on delete cascade,
+  site_url      text,
+  date          date not null,
+  page          text not null,
+  clicks        bigint not null default 0,
+  impressions   bigint not null default 0,
+  ctr           numeric(6,4) not null default 0,
+  position      numeric(6,2) not null default 0,
+  updated_at    timestamptz not null default now(),
+  unique (client_id, date, page)
+);
+
+create index if not exists idx_gsc_page_daily_client_date
+  on gsc_page_daily (client_id, date);
+
+-- ----------------------------------------------------------------------------
 --  Registro de sincronizaciones (alimenta "Historial de sincronizaciones").
 -- ----------------------------------------------------------------------------
 create table if not exists sync_logs (

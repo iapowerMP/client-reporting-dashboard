@@ -1,32 +1,54 @@
 /**
- * Vercel Function: /api/oauth-ga4?action=start|callback|accounts|finalize
- * Flujo completo de "Conectar con Google" para GA4, unificado en un solo
- * archivo (en vez de 4 funciones separadas) para no superar el límite de
- * Serverless Functions del plan de Vercel. GA4 solo admite este modo (sin
- * API manual con credencial compartida).
+ * Vercel Function: /api/oauth-google?service=ga4|gsc&action=start|callback|accounts|finalize
+ * Flujo de "iniciar sesión con Google", compartido por todas las
+ * integraciones de Google (GA4, Search Console, y las que se añadan más
+ * adelante) en un solo archivo — para no superar el límite de Serverless
+ * Functions del plan de Vercel. Todas reutilizan el mismo cliente OAuth de
+ * Google Cloud (GOOGLE_OAUTH_CLIENT_ID/SECRET), cada una con su propio scope
+ * de solo lectura.
  *
- *   - action=start     (GET)  Redirige al diálogo de OAuth de Google.
- *     access_type=offline + prompt=consent fuerzan a que Google devuelva un
- *     refresh_token también en re-conexiones.
- *   - action=callback   (GET)  Google redirige aquí con un `code`. Se canjea
- *     por un access_token (1h) y un refresh_token (no caduca hasta que se
- *     revoque), guardado en una cookie firmada httpOnly de corta vida
- *     mientras el usuario elige la propiedad en el paso siguiente.
- *   - action=accounts   (GET)  Lee el access_token pendiente de la cookie y
- *     lista las propiedades GA4 de esa persona.
- *   - action=finalize   (POST) Guarda en data_sources la propiedad elegida
- *     junto con el refresh token de ESE usuario (auth_method = 'oauth').
+ *   - action=start     (GET)  Redirige al diálogo de OAuth de Google con el
+ *     scope de `service`. access_type=offline + prompt=consent fuerzan a que
+ *     Google devuelva un refresh_token también en re-conexiones.
+ *   - action=callback   (GET)  Google redirige aquí con ?code&state (el
+ *     `service` viaja dentro de `state`, firmado, no como query param propio
+ *     — así una única URL de redirección registrada sirve para todos los
+ *     servicios). Canjea el code por un access_token (1h) y un refresh_token,
+ *     guardados en una cookie firmada httpOnly de corta vida (distinta por
+ *     servicio) mientras el usuario elige la cuenta en el paso siguiente.
+ *   - action=accounts   (GET)  Lista las cuentas/propiedades de ESE servicio
+ *     a las que la persona tiene acceso.
+ *   - action=finalize   (POST) Guarda en data_sources la cuenta elegida junto
+ *     con el refresh token de ESE usuario (auth_method = 'oauth').
  *
  * Importante: la URL de redirección registrada en el cliente OAuth de Google
  * Cloud y en la variable de entorno GOOGLE_OAUTH_REDIRECT_URI debe ser
- * ".../api/oauth-ga4?action=callback" (Google añade sus propios query
- * params — code, state — a continuación, sin conflicto).
+ * ".../api/oauth-google?action=callback" (sin &service=, se recupera del
+ * `state`).
  */
 import { timingSafeEqual, createHmac } from 'crypto'
 
+type GoogleService = 'ga4' | 'gsc'
+
+const SERVICE_CONFIG: Record<GoogleService, { scope: string; platform: string; pendingCookie: string }> = {
+  ga4: {
+    scope: 'https://www.googleapis.com/auth/analytics.readonly',
+    platform: 'ga4',
+    pendingCookie: 'mp_google_oauth_pending_ga4',
+  },
+  gsc: {
+    scope: 'https://www.googleapis.com/auth/webmasters.readonly',
+    platform: 'gsc',
+    pendingCookie: 'mp_google_oauth_pending_gsc',
+  },
+}
+
 const STATE_TTL_MS = 10 * 60 * 1000
-const PENDING_COOKIE = 'mp_ga4_oauth_pending'
 const PENDING_TTL_S = 10 * 60
+
+function isGoogleService(value: unknown): value is GoogleService {
+  return value === 'ga4' || value === 'gsc'
+}
 
 async function resolveClient(
   supabaseUrl: string,
@@ -60,23 +82,23 @@ function checkAccess(req: any, client: { access_password_hash: string | null }, 
   return !!token && verifyToken(token, slug, secret)
 }
 
-function signState(slug: string, secret: string): string {
+function signState(slug: string, service: GoogleService, secret: string): string {
   const expiry = Date.now() + STATE_TTL_MS
-  const sig = createHmac('sha256', secret).update(`oauth-state:${slug}:${expiry}`).digest('hex')
-  return Buffer.from(`${slug}.${expiry}.${sig}`).toString('base64url')
+  const sig = createHmac('sha256', secret).update(`oauth-state:${slug}:${service}:${expiry}`).digest('hex')
+  return Buffer.from(`${slug}.${service}.${expiry}.${sig}`).toString('base64url')
 }
 
-function verifyState(state: string, secret: string): { slug: string } | null {
+function verifyState(state: string, secret: string): { slug: string; service: GoogleService } | null {
   try {
     const decoded = Buffer.from(state, 'base64url').toString('utf8')
-    const [slug, expiryStr, sig] = decoded.split('.')
+    const [slug, service, expiryStr, sig] = decoded.split('.')
     const expiry = Number(expiryStr)
-    if (!slug || !expiry || !sig || Date.now() > expiry) return null
-    const expected = createHmac('sha256', secret).update(`oauth-state:${slug}:${expiry}`).digest('hex')
+    if (!slug || !isGoogleService(service) || !expiry || !sig || Date.now() > expiry) return null
+    const expected = createHmac('sha256', secret).update(`oauth-state:${slug}:${service}:${expiry}`).digest('hex')
     const a = Buffer.from(sig, 'hex')
     const b = Buffer.from(expected, 'hex')
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null
-    return { slug }
+    return { slug, service }
   } catch {
     return null
   }
@@ -154,12 +176,18 @@ export default async function handler(req: any, res: any) {
         res.status(400).json({ error: 'Falta o es inválido el parámetro action.' })
     }
   } catch (e) {
-    res.status(500).json({ error: `Error inesperado en /api/oauth-ga4: ${(e as Error).message}` })
+    res.status(500).json({ error: `Error inesperado en /api/oauth-google: ${(e as Error).message}` })
   }
 }
 
-/** action=start — GET ?client=<slug>&token=<sesión opcional> */
+/** action=start — GET ?service=ga4|gsc&client=<slug>&token=<sesión opcional> */
 async function handleStart(req: any, res: any) {
+  const service = req.query?.service
+  if (!isGoogleService(service)) {
+    res.status(400).send('Falta o es inválido el parámetro service (ga4 | gsc).')
+    return
+  }
+
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET, GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_REDIRECT_URI } =
     process.env
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !AUTH_TOKEN_SECRET) {
@@ -190,12 +218,12 @@ async function handleStart(req: any, res: any) {
     }
   }
 
-  const state = signState(slug, AUTH_TOKEN_SECRET)
+  const state = signState(slug, service, AUTH_TOKEN_SECRET)
   const params = new URLSearchParams({
     client_id: GOOGLE_OAUTH_CLIENT_ID,
     redirect_uri: GOOGLE_OAUTH_REDIRECT_URI,
     response_type: 'code',
-    scope: 'https://www.googleapis.com/auth/analytics.readonly',
+    scope: SERVICE_CONFIG[service].scope,
     access_type: 'offline',
     prompt: 'consent',
     state,
@@ -260,17 +288,23 @@ async function handleCallback(req: any, res: any) {
     )
     res.setHeader(
       'Set-Cookie',
-      `${PENDING_COOKIE}=${cookieValue}; Max-Age=${PENDING_TTL_S}; Path=/api/oauth-ga4; HttpOnly; Secure; SameSite=Lax`,
+      `${SERVICE_CONFIG[state.service].pendingCookie}=${cookieValue}; Max-Age=${PENDING_TTL_S}; Path=/api/oauth-google; HttpOnly; Secure; SameSite=Lax`,
     )
-    res.writeHead(302, { Location: `${reportOrigin()}/c/${state.slug}/settings?ga4_oauth=picking` })
+    res.writeHead(302, { Location: `${reportOrigin()}/c/${state.slug}/settings?google_oauth=${state.service}` })
     res.end()
   } catch (e) {
     res.status(502).send(htmlError((e as Error).message))
   }
 }
 
-/** action=accounts — GET ?client=<slug> */
+/** action=accounts — GET ?service=ga4|gsc&client=<slug> */
 async function handleAccounts(req: any, res: any) {
+  const service = req.query?.service
+  if (!isGoogleService(service)) {
+    res.status(400).json({ error: 'Falta o es inválido el parámetro service (ga4 | gsc).' })
+    return
+  }
+
   const { AUTH_TOKEN_SECRET } = process.env
   if (!AUTH_TOKEN_SECRET) {
     res.status(500).json({ error: 'Falta la variable de entorno AUTH_TOKEN_SECRET.' })
@@ -284,39 +318,55 @@ async function handleAccounts(req: any, res: any) {
   }
 
   const cookies = parseCookies(req.headers?.cookie)
-  const session = cookies[PENDING_COOKIE] ? readPendingSession(cookies[PENDING_COOKIE], slug, AUTH_TOKEN_SECRET) : null
+  const cookieName = SERVICE_CONFIG[service].pendingCookie
+  const session = cookies[cookieName] ? readPendingSession(cookies[cookieName], slug, AUTH_TOKEN_SECRET) : null
   if (!session) {
     res.status(401).json({ error: 'La sesión de conexión con Google ha caducado. Vuelve a pulsar "Conectar con Google".' })
     return
   }
 
   try {
-    const resp = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200', {
+    if (service === 'ga4') {
+      const resp = await fetch('https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200', {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+      })
+      const body = (await resp.json()) as {
+        accountSummaries?: Array<{
+          displayName: string
+          propertySummaries?: Array<{ property: string; displayName: string }>
+        }>
+        error?: { message: string }
+      }
+      if (!resp.ok) throw new Error(body.error?.message || `Google respondió ${resp.status}.`)
+      const accounts = (body.accountSummaries ?? []).flatMap((acc) =>
+        (acc.propertySummaries ?? []).map((p) => ({
+          id: p.property, // "properties/XXXXXXXXX"
+          name: `${p.displayName} (${acc.displayName})`,
+        })),
+      )
+      res.status(200).json({ accounts })
+      return
+    }
+
+    // service === 'gsc'
+    const resp = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
       headers: { Authorization: `Bearer ${session.accessToken}` },
     })
     const body = (await resp.json()) as {
-      accountSummaries?: Array<{
-        displayName: string
-        propertySummaries?: Array<{ property: string; displayName: string }>
-      }>
+      siteEntry?: Array<{ siteUrl: string; permissionLevel: string }>
       error?: { message: string }
     }
-    if (!resp.ok) {
-      throw new Error(body.error?.message || `Google respondió ${resp.status}.`)
-    }
-    const accounts = (body.accountSummaries ?? []).flatMap((acc) =>
-      (acc.propertySummaries ?? []).map((p) => ({
-        id: p.property, // "properties/XXXXXXXXX"
-        name: `${p.displayName} (${acc.displayName})`,
-      })),
-    )
+    if (!resp.ok) throw new Error(body.error?.message || `Google respondió ${resp.status}.`)
+    const accounts = (body.siteEntry ?? [])
+      .filter((s) => s.permissionLevel !== 'siteUnverifiedUser')
+      .map((s) => ({ id: s.siteUrl, name: s.siteUrl }))
     res.status(200).json({ accounts })
   } catch (e) {
-    res.status(502).json({ error: (e as Error).message || 'No se pudieron listar las propiedades de GA4.' })
+    res.status(502).json({ error: (e as Error).message || 'No se pudieron listar las cuentas de Google.' })
   }
 }
 
-/** action=finalize — POST { client, propertyId } */
+/** action=finalize — POST { client, service, accountId } */
 async function handleFinalize(req: any, res: any) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Método no permitido.' })
@@ -331,9 +381,9 @@ async function handleFinalize(req: any, res: any) {
     return
   }
 
-  const { client: slug, propertyId } = req.body ?? {}
-  if (!slug || !propertyId) {
-    res.status(400).json({ error: 'Faltan campos: client y propertyId son obligatorios.' })
+  const { client: slug, service, accountId } = req.body ?? {}
+  if (!slug || !isGoogleService(service) || !accountId) {
+    res.status(400).json({ error: 'Faltan campos: client, service y accountId son obligatorios.' })
     return
   }
 
@@ -348,7 +398,8 @@ async function handleFinalize(req: any, res: any) {
   }
 
   const cookies = parseCookies(req.headers?.cookie)
-  const session = cookies[PENDING_COOKIE] ? readPendingSession(cookies[PENDING_COOKIE], slug, AUTH_TOKEN_SECRET) : null
+  const cookieName = SERVICE_CONFIG[service].pendingCookie
+  const session = cookies[cookieName] ? readPendingSession(cookies[cookieName], slug, AUTH_TOKEN_SECRET) : null
   if (!session) {
     res.status(401).json({ error: 'La sesión de conexión con Google ha caducado. Vuelve a pulsar "Conectar con Google".' })
     return
@@ -366,8 +417,8 @@ async function handleFinalize(req: any, res: any) {
       body: JSON.stringify([
         {
           client_id: client.id,
-          platform: 'ga4',
-          external_id: propertyId,
+          platform: SERVICE_CONFIG[service].platform,
+          external_id: accountId,
           status: 'conectado',
           auth_method: 'oauth',
           oauth_refresh_token: session.refreshToken,
@@ -378,7 +429,7 @@ async function handleFinalize(req: any, res: any) {
       res.status(502).json({ error: `Supabase respondió ${resp.status} al guardar data_sources.` })
       return
     }
-    res.setHeader('Set-Cookie', `${PENDING_COOKIE}=; Max-Age=0; Path=/api/oauth-ga4; HttpOnly; Secure; SameSite=Lax`)
+    res.setHeader('Set-Cookie', `${cookieName}=; Max-Age=0; Path=/api/oauth-google; HttpOnly; Secure; SameSite=Lax`)
     const [row] = await resp.json()
     res.status(200).json({ source: row })
   } catch {

@@ -48,6 +48,7 @@ const SYNC_WEBHOOKS: Record<string, string | undefined> = {
   'google-ads': process.env.N8N_GADS_SYNC_WEBHOOK_URL,
   'meta-ads': process.env.N8N_META_SYNC_WEBHOOK_URL,
   ga4: process.env.N8N_GA4_SYNC_WEBHOOK_URL,
+  gsc: process.env.N8N_GSC_SYNC_WEBHOOK_URL,
 }
 
 export default async function handler(req: any, res: any) {
