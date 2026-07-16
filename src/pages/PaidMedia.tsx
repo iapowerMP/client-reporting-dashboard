@@ -35,7 +35,7 @@ import {
   PAID_TAB_TO_CONNECTION,
   computePaidKpis,
   type Campaign,
-} from '@/data/mockData'
+} from '@/data/catalog'
 import { useReportConfig } from '@/lib/reportConfig'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'

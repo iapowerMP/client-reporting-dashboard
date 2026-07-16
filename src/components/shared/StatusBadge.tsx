@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import type { StatusVariant } from '@/data/mockData'
+import type { StatusVariant } from '@/data/catalog'
 
 interface StatusBadgeProps {
   status: StatusVariant | string

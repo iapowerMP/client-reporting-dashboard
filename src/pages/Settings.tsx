@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom'
-import { UploadCloud, Loader2, Facebook } from 'lucide-react'
+import { UploadCloud, Loader2, Facebook, Chrome } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import StatusBadge from '@/components/shared/StatusBadge'
 import Toggle from '@/components/shared/Toggle'
 import { useReportConfig } from '@/lib/reportConfig'
-import { CONNECTION_CATALOG, type StatusVariant } from '@/data/mockData'
+import { CONNECTION_CATALOG, type StatusVariant } from '@/data/catalog'
 import { type useClientInfo } from '@/lib/useClientInfo'
 import { authHeaders, getStoredToken } from '@/lib/authToken'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
@@ -16,13 +16,46 @@ const MAX_LOGO_BYTES = 2 * 1024 * 1024
  * n8n/Supabase). El resto del catálogo existe para poder guardar ya su ID de
  * cuenta, pero no sincroniza nada todavía — el estado debe decirlo con
  * claridad en vez de simular una conexión que no existe. */
-const BUILT_INTEGRATIONS = new Set(['google-ads', 'meta-ads'])
+const BUILT_INTEGRATIONS = new Set(['google-ads', 'meta-ads', 'ga4'])
 
 /** Plataformas que, además de la conexión manual por API, admiten "iniciar
  * sesión" (OAuth): el propio PM/cliente concede acceso a las cuentas que él
  * mismo administra, sin depender de que estén compartidas con nuestro
  * Business Manager. */
-const OAUTH_CAPABLE = new Set(['meta-ads'])
+const OAUTH_CAPABLE = new Set(['meta-ads', 'ga4'])
+
+/** Plataformas que SOLO admiten inicio de sesión (sin campo manual de ID). */
+const OAUTH_ONLY = new Set(['ga4'])
+
+type OauthPlatform = 'meta' | 'ga4'
+
+/** Un flujo de "iniciar sesión" por plataforma: sus endpoints y el nombre
+ * del campo que espera /api/oauth-<platform>-finalize. */
+const OAUTH_CONFIG: Record<
+  OauthPlatform,
+  { startUrl: string; accountsUrl: string; finalizeUrl: string; finalizeField: string; providerLabel: 'Facebook' | 'Google' }
+> = {
+  meta: {
+    startUrl: '/api/oauth-meta-start',
+    accountsUrl: '/api/oauth-meta-accounts',
+    finalizeUrl: '/api/oauth-meta-finalize',
+    finalizeField: 'accountId',
+    providerLabel: 'Facebook',
+  },
+  ga4: {
+    startUrl: '/api/oauth-ga4-start',
+    accountsUrl: '/api/oauth-ga4-accounts',
+    finalizeUrl: '/api/oauth-ga4-finalize',
+    finalizeField: 'propertyId',
+    providerLabel: 'Google',
+  },
+}
+
+/** A qué flujo de login corresponde cada conexión del catálogo. */
+const OAUTH_PLATFORM_BY_CONNECTION: Record<string, OauthPlatform> = {
+  'meta-ads': 'meta',
+  ga4: 'ga4',
+}
 
 interface DataSourceRow {
   platform: string
@@ -42,7 +75,9 @@ interface RealConnection {
   statusNote: string
   canSync: boolean
   oauthCapable: boolean
+  oauthOnly: boolean
   authMethod: 'api' | 'oauth'
+  loginProvider: 'Facebook' | 'Google' | null
 }
 
 function formatLastSync(iso: string | null): string {
@@ -63,7 +98,9 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
     const row = byPlatform.get(entry.id)
     const value = row?.external_id ?? ''
     const oauthCapable = OAUTH_CAPABLE.has(entry.id)
+    const oauthOnly = OAUTH_ONLY.has(entry.id)
     const authMethod: 'api' | 'oauth' = row?.auth_method === 'oauth' ? 'oauth' : 'api'
+    const loginProvider = oauthCapable ? OAUTH_CONFIG[OAUTH_PLATFORM_BY_CONNECTION[entry.id]].providerLabel : null
     if (!BUILT_INTEGRATIONS.has(entry.id)) {
       return {
         ...entry,
@@ -72,11 +109,13 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
         statusNote: 'Integración en desarrollo — todavía no sincroniza datos.',
         canSync: false,
         oauthCapable,
+        oauthOnly,
         authMethod,
+        loginProvider,
       }
     }
     if (value) {
-      const via = authMethod === 'oauth' ? ' · conectado con inicio de sesión de Facebook' : ''
+      const via = authMethod === 'oauth' ? ` · conectado con inicio de sesión de ${loginProvider}` : ''
       return {
         ...entry,
         value,
@@ -84,17 +123,23 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
         statusNote: `${formatLastSync(row?.last_sync ?? null)}${via}`,
         canSync: true,
         oauthCapable,
+        oauthOnly,
         authMethod,
+        loginProvider,
       }
     }
     return {
       ...entry,
       value,
       status: 'Pendiente',
-      statusNote: 'Guarda el identificador de la cuenta para activar la sincronización.',
+      statusNote: oauthOnly
+        ? 'Inicia sesión para activar la sincronización.'
+        : 'Guarda el identificador de la cuenta para activar la sincronización.',
       canSync: false,
       oauthCapable,
+      oauthOnly,
       authMethod,
+      loginProvider,
     }
   })
 }
@@ -121,15 +166,16 @@ function Toast({ message }: { message: string }) {
   )
 }
 
-/* ------------------------ Selector de cuenta (Meta) ----------------------- */
+/* --------------------- Selector de cuenta (inicio de sesión) -------------- */
 
-interface MetaOauthAccount {
+interface OauthAccount {
   id: string
   name: string
-  active: boolean
+  active?: boolean
 }
 
-function MetaAccountPicker({
+function OauthAccountPicker({
+  platformLabel,
   loading,
   error,
   accounts,
@@ -139,9 +185,10 @@ function MetaAccountPicker({
   onConfirm,
   onCancel,
 }: {
+  platformLabel: string
   loading: boolean
   error: string | null
-  accounts: MetaOauthAccount[] | null
+  accounts: OauthAccount[] | null
   selected: string
   onSelect: (id: string) => void
   confirming: boolean
@@ -151,9 +198,9 @@ function MetaAccountPicker({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded-card border border-border bg-card p-5">
-        <h3 className="text-sm font-semibold text-white">Elige la cuenta de Meta Ads</h3>
+        <h3 className="text-sm font-semibold text-white">Elige la cuenta de {platformLabel}</h3>
         <p className="mt-1 text-xs text-text-secondary">
-          Son las cuentas publicitarias a las que tiene acceso la cuenta de Facebook con la que has iniciado sesión.
+          Son las cuentas a las que tiene acceso la cuenta con la que has iniciado sesión.
         </p>
 
         <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
@@ -161,7 +208,7 @@ function MetaAccountPicker({
           {error && <p className="py-6 text-center text-sm text-negative">{error}</p>}
           {!loading && !error && accounts?.length === 0 && (
             <p className="py-6 text-center text-sm text-text-secondary">
-              Esa cuenta de Facebook no administra ninguna cuenta publicitaria.
+              Esa cuenta no administra ninguna cuenta de {platformLabel}.
             </p>
           )}
           {!loading &&
@@ -174,14 +221,14 @@ function MetaAccountPicker({
                 <span className="flex items-center gap-2">
                   <input
                     type="radio"
-                    name="meta-account"
+                    name="oauth-account"
                     checked={selected === acc.id}
                     onChange={() => onSelect(acc.id)}
                   />
                   {acc.name}
                   <span className="text-xs text-text-secondary">({acc.id})</span>
                 </span>
-                {!acc.active && <span className="text-xs text-text-secondary">Inactiva</span>}
+                {acc.active === false && <span className="text-xs text-text-secondary">Inactiva</span>}
               </label>
             ))}
         </div>
@@ -237,6 +284,8 @@ function Field({
 
 /* --------------------------- Card de conexión ---------------------------- */
 
+const LOGIN_ICON = { Facebook, Google: Chrome } as const
+
 function ConnectionCard({
   conn,
   visible,
@@ -245,7 +294,7 @@ function ConnectionCard({
   onSaveExternalId,
   syncing,
   onSync,
-  onConnectFacebook,
+  onConnectOauth,
 }: {
   conn: RealConnection
   visible: boolean
@@ -254,9 +303,10 @@ function ConnectionCard({
   onSaveExternalId: (value: string) => void
   syncing: boolean
   onSync: () => void
-  onConnectFacebook: () => void
+  onConnectOauth: () => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const LoginIcon = conn.loginProvider ? LOGIN_ICON[conn.loginProvider] : null
 
   return (
     <div className="rounded-card border border-border bg-card p-5">
@@ -265,28 +315,35 @@ function ConnectionCard({
         <StatusBadge status={conn.status} />
       </div>
 
-      <div className="mt-4">
-        <Field
-          label={conn.label}
-          defaultValue={conn.value}
-          placeholder={conn.placeholder}
-          inputRef={inputRef}
-        />
-      </div>
+      {!conn.oauthOnly && (
+        <>
+          <div className="mt-4">
+            <Field
+              label={conn.label}
+              defaultValue={conn.value}
+              placeholder={conn.placeholder}
+              inputRef={inputRef}
+            />
+          </div>
+
+          <div className="mt-4 flex items-center gap-2">
+            <button
+              onClick={() => onSaveExternalId(inputRef.current?.value ?? '')}
+              disabled={saving}
+              className="rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
+            >
+              {saving ? 'Guardando...' : 'Guardar'}
+            </button>
+          </div>
+        </>
+      )}
 
       <div className="mt-3 min-h-[18px] text-xs text-text-secondary">
         {conn.statusNote}
       </div>
 
-      <div className="mt-4 flex items-center gap-2">
-        <button
-          onClick={() => onSaveExternalId(inputRef.current?.value ?? '')}
-          disabled={saving}
-          className="rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
-        >
-          {saving ? 'Guardando...' : 'Guardar'}
-        </button>
-        {conn.canSync && (
+      {conn.canSync && (
+        <div className="mt-3">
           <button
             onClick={onSync}
             disabled={syncing}
@@ -301,23 +358,25 @@ function ConnectionCard({
               'Sincronizar ahora'
             )}
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Conexión alternativa por inicio de sesión (en vez de escribir el ID
-          a mano): el PM/cliente concede acceso a sus propias cuentas, sin
-          depender de que estén compartidas con nuestro Business Manager. */}
+      {/* Conexión por inicio de sesión: el PM/cliente concede acceso a sus
+          propias cuentas, sin depender de que estén compartidas con nuestro
+          Business Manager / proyecto de Google. */}
       {conn.oauthCapable && (
         <div className="mt-3 border-t border-border pt-3">
-          <p className="mb-2 text-xs text-text-secondary">
-            — o conecta iniciando sesión con la cuenta que administra esta cuenta publicitaria —
-          </p>
+          {!conn.oauthOnly && (
+            <p className="mb-2 text-xs text-text-secondary">
+              — o conecta iniciando sesión con la cuenta que administra esta cuenta —
+            </p>
+          )}
           <button
-            onClick={onConnectFacebook}
+            onClick={onConnectOauth}
             className="inline-flex items-center gap-2 rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5"
           >
-            <Facebook className="h-4 w-4" />
-            {conn.authMethod === 'oauth' ? 'Reconectar con Facebook' : 'Conectar con Facebook'}
+            {LoginIcon && <LoginIcon className="h-4 w-4" />}
+            {conn.authMethod === 'oauth' ? `Reconectar con ${conn.loginProvider}` : `Conectar con ${conn.loginProvider}`}
           </button>
         </div>
       )}
@@ -422,65 +481,71 @@ export default function Settings() {
     }
   }
 
-  /* ------------------- Conexión de Meta Ads por inicio de sesión ------------------- */
+  /* ------------------------ Conexión por inicio de sesión ------------------------ */
 
-  const handleConnectFacebook = () => {
+  const handleConnectOauth = (platform: OauthPlatform) => {
     const token = getStoredToken(clientSlug)
     const params = new URLSearchParams({ client: clientSlug })
     if (token) params.set('token', token)
-    window.location.href = `/api/oauth-meta-start?${params.toString()}`
+    window.location.href = `${OAUTH_CONFIG[platform].startUrl}?${params.toString()}`
   }
 
-  const showingMetaPicker = searchParams.get('meta_oauth') === 'picking'
-  const [metaAccounts, setMetaAccounts] = useState<{ id: string; name: string; active: boolean }[] | null>(null)
-  const [metaAccountsLoading, setMetaAccountsLoading] = useState(false)
-  const [metaAccountsError, setMetaAccountsError] = useState<string | null>(null)
-  const [selectedMetaAccount, setSelectedMetaAccount] = useState('')
-  const [finalizingMeta, setFinalizingMeta] = useState(false)
+  // Qué flujo de login está "recogiendo" al usuario tras volver de Facebook/Google
+  // (cada uno redirige con su propio query param: meta_oauth / ga4_oauth).
+  const activeOauthPlatform: OauthPlatform | null =
+    searchParams.get('meta_oauth') === 'picking' ? 'meta' : searchParams.get('ga4_oauth') === 'picking' ? 'ga4' : null
+
+  const [oauthAccounts, setOauthAccounts] = useState<OauthAccount[] | null>(null)
+  const [oauthAccountsLoading, setOauthAccountsLoading] = useState(false)
+  const [oauthAccountsError, setOauthAccountsError] = useState<string | null>(null)
+  const [selectedOauthAccount, setSelectedOauthAccount] = useState('')
+  const [finalizingOauth, setFinalizingOauth] = useState(false)
 
   useEffect(() => {
-    if (!showingMetaPicker) return
-    setMetaAccountsLoading(true)
-    setMetaAccountsError(null)
-    fetch(`/api/oauth-meta-accounts?client=${encodeURIComponent(clientSlug)}`)
+    if (!activeOauthPlatform) return
+    setOauthAccountsLoading(true)
+    setOauthAccountsError(null)
+    fetch(`${OAUTH_CONFIG[activeOauthPlatform].accountsUrl}?client=${encodeURIComponent(clientSlug)}`)
       .then(async (resp) => {
         const body = await resp.json().catch(() => ({}))
-        if (!resp.ok) throw new Error(body?.error || 'No se pudieron cargar las cuentas de Meta.')
-        setMetaAccounts(body.accounts ?? [])
+        if (!resp.ok) throw new Error(body?.error || 'No se pudieron cargar las cuentas.')
+        setOauthAccounts(body.accounts ?? [])
       })
-      .catch((e) => setMetaAccountsError(e instanceof Error ? e.message : 'No se pudieron cargar las cuentas de Meta.'))
-      .finally(() => setMetaAccountsLoading(false))
+      .catch((e) => setOauthAccountsError(e instanceof Error ? e.message : 'No se pudieron cargar las cuentas.'))
+      .finally(() => setOauthAccountsLoading(false))
     // Se ejecuta una sola vez al detectar el parámetro de vuelta del login.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showingMetaPicker])
+  }, [activeOauthPlatform])
 
-  const closeMetaPicker = () => {
+  const closeOauthPicker = () => {
     const next = new URLSearchParams(searchParams)
     next.delete('meta_oauth')
+    next.delete('ga4_oauth')
     setSearchParams(next, { replace: true })
-    setMetaAccounts(null)
-    setMetaAccountsError(null)
-    setSelectedMetaAccount('')
+    setOauthAccounts(null)
+    setOauthAccountsError(null)
+    setSelectedOauthAccount('')
   }
 
-  const handleConfirmMetaAccount = async () => {
-    if (!selectedMetaAccount) return
-    setFinalizingMeta(true)
+  const handleConfirmOauthAccount = async () => {
+    if (!activeOauthPlatform || !selectedOauthAccount) return
+    const cfg = OAUTH_CONFIG[activeOauthPlatform]
+    setFinalizingOauth(true)
     try {
-      const resp = await fetch('/api/oauth-meta-finalize', {
+      const resp = await fetch(cfg.finalizeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
-        body: JSON.stringify({ client: clientSlug, accountId: selectedMetaAccount }),
+        body: JSON.stringify({ client: clientSlug, [cfg.finalizeField]: selectedOauthAccount }),
       })
       const body = await resp.json().catch(() => ({}))
       if (!resp.ok) throw new Error(body?.error)
-      closeMetaPicker()
+      closeOauthPicker()
       await loadSources()
-      showToast('Meta Ads conectado con inicio de sesión de Facebook')
+      showToast(`Conectado con inicio de sesión de ${cfg.providerLabel}`)
     } catch (e) {
-      setMetaAccountsError(e instanceof Error && e.message ? e.message : 'No se pudo completar la conexión.')
+      setOauthAccountsError(e instanceof Error && e.message ? e.message : 'No se pudo completar la conexión.')
     } finally {
-      setFinalizingMeta(false)
+      setFinalizingOauth(false)
     }
   }
 
@@ -699,7 +764,7 @@ export default function Settings() {
               onSaveExternalId={(value) => handleSaveExternalId(conn.id, value)}
               syncing={syncingIds.includes(conn.id)}
               onSync={() => handleSync(conn.id)}
-              onConnectFacebook={handleConnectFacebook}
+              onConnectOauth={() => handleConnectOauth(OAUTH_PLATFORM_BY_CONNECTION[conn.id])}
             />
           ))}
         </div>
@@ -714,16 +779,17 @@ export default function Settings() {
 
       {toast && <Toast message={toast} />}
 
-      {showingMetaPicker && (
-        <MetaAccountPicker
-          loading={metaAccountsLoading}
-          error={metaAccountsError}
-          accounts={metaAccounts}
-          selected={selectedMetaAccount}
-          onSelect={setSelectedMetaAccount}
-          confirming={finalizingMeta}
-          onConfirm={handleConfirmMetaAccount}
-          onCancel={closeMetaPicker}
+      {activeOauthPlatform && (
+        <OauthAccountPicker
+          platformLabel={activeOauthPlatform === 'meta' ? 'Meta Ads' : 'Google Analytics 4'}
+          loading={oauthAccountsLoading}
+          error={oauthAccountsError}
+          accounts={oauthAccounts}
+          selected={selectedOauthAccount}
+          onSelect={setSelectedOauthAccount}
+          confirming={finalizingOauth}
+          onConfirm={handleConfirmOauthAccount}
+          onCancel={closeOauthPicker}
         />
       )}
     </div>

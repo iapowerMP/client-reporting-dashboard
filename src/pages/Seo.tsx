@@ -24,7 +24,7 @@ import {
   SEO_TAB_TO_CONNECTION,
   type SeoTab,
   type GscRow,
-} from '@/data/mockData'
+} from '@/data/catalog'
 import { useReportConfig } from '@/lib/reportConfig'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
@@ -87,14 +87,26 @@ export default function Seo() {
   if (error || !data)
     return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
 
+  // La pestaña "GA4" y "Search Console" muestran solo sus propios widgets,
+  // sin mezclar datos de la otra herramienta (Overview y Semrush siguen
+  // mostrando la vista combinada).
+  const isGa4Tab = activeTab === 'GA4'
+  const isGscTab = activeTab === 'Search Console'
+  const kpis = isGa4Tab ? data.kpisByTool.GA4 : isGscTab ? data.kpisByTool['Search Console'] : data.kpis
+  const traffic = isGa4Tab ? data.trafficByTool.GA4 : isGscTab ? data.trafficByTool['Search Console'] : data.traffic
+  const showChannels = !isGscTab
+  const showGscWidgets = !isGa4Tab
+  const showSesiones = !isGscTab
+  const showClics = !isGa4Tab
+
   return (
     <div className="space-y-6">
-      {/* Tabs (cambian el visual pero no filtran datos) */}
+      {/* Tabs de herramienta */}
       <Tabs tabs={visibleTabs} active={activeTab} onChange={setTab} />
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-        {data.kpis.map((kpi) => (
+        {kpis.map((kpi) => (
           <KpiCard key={kpi.label} {...kpi} />
         ))}
       </div>
@@ -104,7 +116,7 @@ export default function Seo() {
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={data.traffic}
+              data={traffic}
               margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
             >
               <defs>
@@ -145,133 +157,146 @@ export default function Seo() {
                 content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
                 cursor={{ stroke: '#2A2D36' }}
               />
-              <Area
-                yAxisId="left"
-                type="monotone"
-                dataKey="sesiones"
-                name="Sesiones orgánicas"
-                stroke="#F2FE54"
-                strokeWidth={2}
-                fill="url(#seoGradient)"
-              />
-              <Line
-                yAxisId="right"
-                type="monotone"
-                dataKey="clics"
-                name="Clics GSC"
-                stroke="#FFFFFF"
-                strokeWidth={2}
-                dot={false}
-              />
+              {showSesiones && (
+                <Area
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="sesiones"
+                  name="Sesiones orgánicas"
+                  stroke="#F2FE54"
+                  strokeWidth={2}
+                  fill="url(#seoGradient)"
+                />
+              )}
+              {showClics && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="clics"
+                  name="Clics GSC"
+                  stroke="#FFFFFF"
+                  strokeWidth={2}
+                  dot={false}
+                />
+              )}
             </ComposedChart>
           </ResponsiveContainer>
         </div>
       </ChartCard>
 
       {/* Fila de 2 gráficos */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Gráfico 2: Tráfico por canal */}
-        <ChartCard title="Tráfico por canal">
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={data.channels}
-                margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
-                <XAxis
-                  dataKey="channel"
-                  stroke="#9CA3AF"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={{ stroke: '#2A2D36' }}
-                />
-                <YAxis
-                  stroke="#9CA3AF"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(v) => formatCompact(v as number)}
-                  width={44}
-                />
-                <Tooltip
-                  content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
-                  cursor={{ fill: '#ffffff08' }}
-                />
-                <Bar dataKey="value" name="Sesiones" radius={[4, 4, 0, 0]}>
-                  {data.channels.map((c) => (
-                    <Cell
-                      key={c.channel}
-                      fill={c.organic ? '#F2FE54' : '#6B7280'}
+      {(showChannels || showGscWidgets) && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* Gráfico 2: Tráfico por canal (GA4) */}
+          {showChannels && (
+            <ChartCard title="Tráfico por canal">
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={data.channels}
+                    margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
+                    <XAxis
+                      dataKey="channel"
+                      stroke="#9CA3AF"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={{ stroke: '#2A2D36' }}
                     />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </ChartCard>
+                    <YAxis
+                      stroke="#9CA3AF"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => formatCompact(v as number)}
+                      width={44}
+                    />
+                    <Tooltip
+                      content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
+                      cursor={{ fill: '#ffffff08' }}
+                    />
+                    <Bar dataKey="value" name="Sesiones" radius={[4, 4, 0, 0]}>
+                      {data.channels.map((c) => (
+                        <Cell
+                          key={c.channel}
+                          fill={c.organic ? '#F2FE54' : '#6B7280'}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </ChartCard>
+          )}
 
-        {/* Gráfico 3: Evolución posición media (eje invertido) */}
-        <ChartCard title="Posición media en Google">
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={data.position}
-                margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  stroke="#9CA3AF"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={{ stroke: '#2A2D36' }}
-                  interval={4}
-                />
-                <YAxis
-                  reversed
-                  domain={[1, 15]}
-                  stroke="#9CA3AF"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                  width={32}
-                />
-                <Tooltip
-                  content={<ChartTooltip formatter={(v) => formatDecimal(v, 1)} />}
-                  cursor={{ stroke: '#2A2D36' }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="position"
-                  name="Posición media"
-                  stroke="#F2FE54"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </ChartCard>
-      </div>
+          {/* Gráfico 3: Evolución posición media (Search Console, eje invertido) */}
+          {showGscWidgets && (
+            <ChartCard title="Posición media en Google">
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={data.position}
+                    margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      stroke="#9CA3AF"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={{ stroke: '#2A2D36' }}
+                      interval={4}
+                    />
+                    <YAxis
+                      reversed
+                      domain={[1, 15]}
+                      stroke="#9CA3AF"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      width={32}
+                    />
+                    <Tooltip
+                      content={<ChartTooltip formatter={(v) => formatDecimal(v, 1)} />}
+                      cursor={{ stroke: '#2A2D36' }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="position"
+                      name="Posición media"
+                      stroke="#F2FE54"
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </ChartCard>
+          )}
+        </div>
+      )}
 
-      {/* Tabla 1: Top Queries */}
-      <ChartCard title="Top búsquedas en Google" noPadding>
-        <DataTable
-          columns={gscColumns('Query')}
-          data={data.topQueries}
-          rowKey={(r) => r.label}
-        />
-      </ChartCard>
+      {/* Tablas de Search Console: solo en Overview/Search Console/Semrush */}
+      {showGscWidgets && (
+        <>
+          <ChartCard title="Top búsquedas en Google" noPadding>
+            <DataTable
+              columns={gscColumns('Query')}
+              data={data.topQueries}
+              rowKey={(r) => r.label}
+            />
+          </ChartCard>
 
-      {/* Tabla 2: Top Páginas */}
-      <ChartCard title="Páginas con más tráfico orgánico" noPadding>
-        <DataTable
-          columns={gscColumns('Página')}
-          data={data.topPages}
-          rowKey={(r) => r.label}
-        />
-      </ChartCard>
+          <ChartCard title="Páginas con más tráfico orgánico" noPadding>
+            <DataTable
+              columns={gscColumns('Página')}
+              data={data.topPages}
+              rowKey={(r) => r.label}
+            />
+          </ChartCard>
+        </>
+      )}
     </div>
   )
 }

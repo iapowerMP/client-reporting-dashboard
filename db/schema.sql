@@ -51,8 +51,12 @@ create table if not exists data_sources (
   -- estar en nuestro Business Manager). El token de oauth es de ESE usuario,
   -- no compartido entre clientes.
   auth_method            text not null default 'api',
-  oauth_access_token     text,                         -- solo si auth_method = 'oauth'
+  oauth_access_token     text,                         -- solo si auth_method = 'oauth' (Meta: token de larga duración, listo para usar)
   oauth_token_expires_at timestamptz,
+  -- Google (GA4, y futuras integraciones de Google) usa un modelo distinto:
+  -- el refresh token no caduca por sí solo, pero hay que canjearlo por un
+  -- access token nuevo antes de cada consulta (lo hace el workflow de n8n).
+  oauth_refresh_token    text,
   unique (client_id, platform)
 );
 
@@ -106,6 +110,36 @@ create table if not exists meta_campaign_daily (
 
 create index if not exists idx_meta_daily_client_date
   on meta_campaign_daily (client_id, date);
+
+-- ----------------------------------------------------------------------------
+--  Google Analytics 4 — métricas diarias por canal (granularidad día+canal).
+--  property_id identifica la propiedad GA4 que originó la fila (permite
+--  ignorar datos de una propiedad anterior si el cliente cambia de cuenta,
+--  igual que customer_id/ad_account_id en paid media). channel es el
+--  "default channel group" de GA4 (Organic Search, Direct, Referral...).
+--  Simplificación actual: sessions/users/newUsers se suman por canal y día;
+--  sumar "users" (usuarios únicos) entre canales o días es una aproximación
+--  razonable para un V1, pero no es matemáticamente exacto (GA4 no permite
+--  sumar usuarios únicos sin inflar el total). engaged_sessions permite
+--  derivar una tasa de rebote agregada (1 - engaged/sessions).
+-- ----------------------------------------------------------------------------
+create table if not exists ga4_daily (
+  id                 bigint generated always as identity primary key,
+  client_id          uuid not null references clients(id) on delete cascade,
+  property_id        text,                    -- "properties/XXXXXXXXX"
+  date               date not null,
+  channel            text not null,           -- Organic Search | Direct | Referral | Social | Paid Search | Email...
+  sessions           bigint not null default 0,
+  users              bigint not null default 0,
+  new_users          bigint not null default 0,
+  engaged_sessions   bigint not null default 0,
+  conversions        numeric(14,2) not null default 0,
+  updated_at         timestamptz not null default now(),
+  unique (client_id, date, channel)
+);
+
+create index if not exists idx_ga4_daily_client_date
+  on ga4_daily (client_id, date);
 
 -- ----------------------------------------------------------------------------
 --  Registro de sincronizaciones (alimenta "Historial de sincronizaciones").

@@ -47,6 +47,7 @@ function checkAccess(req: any, client: { access_password_hash: string | null }, 
 const SYNC_WEBHOOKS: Record<string, string | undefined> = {
   'google-ads': process.env.N8N_GADS_SYNC_WEBHOOK_URL,
   'meta-ads': process.env.N8N_META_SYNC_WEBHOOK_URL,
+  ga4: process.env.N8N_GA4_SYNC_WEBHOOK_URL,
 }
 
 export default async function handler(req: any, res: any) {
@@ -115,12 +116,12 @@ async function handleRequest(req: any, res: any) {
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 8000)
-    // Se envía bajo ambos nombres porque cada workflow de n8n (uno por
-    // plataforma) espera su propia clave (customerId, adAccountId...).
+    // Se envía bajo varios nombres porque cada workflow de n8n (uno por
+    // plataforma) espera su propia clave (customerId, adAccountId, propertyId...).
     const triggerResp = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId: client.id, customerId: accountId, adAccountId: accountId }),
+      body: JSON.stringify({ clientId: client.id, customerId: accountId, adAccountId: accountId, propertyId: accountId }),
       signal: controller.signal,
     })
     clearTimeout(timeout)

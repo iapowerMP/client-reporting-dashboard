@@ -29,7 +29,7 @@ import {
   type SocialTab,
   computeSocialKpis,
   type Post,
-} from '@/data/mockData'
+} from '@/data/catalog'
 import { useReportConfig } from '@/lib/reportConfig'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'

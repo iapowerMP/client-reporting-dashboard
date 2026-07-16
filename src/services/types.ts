@@ -1,7 +1,7 @@
 /**
- * Tipos de la capa de datos. Cada vista consume un "bundle" tipado que el
- * proveedor activo (mock o real) debe devolver con la misma forma. Así, pasar
- * de datos ficticios a datos reales no requiere tocar las vistas.
+ * Tipos de la capa de datos. Cada vista consume un "bundle" tipado que llega
+ * de los endpoints /api/* (Supabase), con la misma forma para cualquier
+ * cliente.
  */
 import type {
   SummaryCard,
@@ -20,10 +20,7 @@ import type {
   EngagementBar,
   Post,
   SocialPlatformStats,
-  ClientData,
-  Connection,
-  SyncLog,
-} from '@/data/mockData'
+} from '@/data/catalog'
 
 export interface OverviewData {
   summary: SummaryCard[]
@@ -42,12 +39,17 @@ export interface PaidData {
 }
 
 export interface SeoData {
+  /** Vista combinada de "Overview" (todas las herramientas conectadas). */
   kpis: KpiData[]
   traffic: SeoTrafficPoint[]
   channels: ChannelBar[]
   position: PositionPoint[]
   topQueries: GscRow[]
   topPages: GscRow[]
+  /** Igual que arriba pero exclusivo de cada herramienta, para que las
+   * pestañas de GA4 / Search Console no mezclen datos de otras. */
+  kpisByTool: Record<'GA4' | 'Search Console', KpiData[]>
+  trafficByTool: Record<'GA4' | 'Search Console', SeoTrafficPoint[]>
 }
 
 export interface SocialData {
@@ -58,14 +60,6 @@ export interface SocialData {
   posts: Post[]
 }
 
-export interface SettingsData {
-  client: ClientData
-  connections: Connection[]
-  syncLogs: SyncLog[]
-}
-
-export type DataMode = 'mock' | 'live'
-
 /** Rango de fechas del selector del informe (7d/30d/90d o personalizado). */
 export interface DateRange {
   from: string
@@ -73,14 +67,12 @@ export interface DateRange {
 }
 
 /**
- * Contrato que cualquier proveedor de datos debe cumplir. Los métodos son
- * asíncronos porque los datos reales llegarán por red (Vercel Functions).
+ * Contrato que el proveedor de datos debe cumplir. Los métodos son
+ * asíncronos porque los datos llegan por red (Vercel Functions).
  */
 export interface DataProvider {
-  readonly mode: DataMode
   getOverview(client: string, range: DateRange): Promise<OverviewData>
   getPaid(client: string, range: DateRange): Promise<PaidData>
   getSeo(client: string, range: DateRange): Promise<SeoData>
   getSocial(client: string, range: DateRange): Promise<SocialData>
-  getSettings(client: string): Promise<SettingsData>
 }

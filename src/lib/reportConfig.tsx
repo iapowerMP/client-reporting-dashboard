@@ -6,7 +6,7 @@ import {
   useMemo,
   type ReactNode,
 } from 'react'
-import { connections } from '@/data/mockData'
+import { CONNECTION_CATALOG } from '@/data/catalog'
 
 /**
  * Configuración del informe: controla qué fuentes de datos (plataformas)
@@ -20,11 +20,14 @@ type VisibilityMap = Record<string, boolean>
  * deployment compartido por varios clientes. */
 const storageKey = (clientSlug: string) => `mp-report-visibility:${clientSlug}`
 
-/** Por defecto: visibles las conexiones "Conectado"; ocultas las demás. */
+/** Por defecto todas las conexiones del catálogo son visibles; el PM las
+ * oculta manualmente si no quiere mostrarlas en el informe (independiente de
+ * si ya están conectadas o no — eso lo indica cada vista con su propio
+ * estado "Pendiente"/"Próximamente"). */
 function defaultVisibility(): VisibilityMap {
   const map: VisibilityMap = {}
-  for (const c of connections) {
-    map[c.id] = c.status === 'Conectado'
+  for (const c of CONNECTION_CATALOG) {
+    map[c.id] = true
   }
   return map
 }
