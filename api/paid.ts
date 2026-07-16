@@ -1,9 +1,9 @@
 /**
  * Vercel Function: GET /api/paid?client=<slug>
- * Lee las métricas diarias de Google Ads desde Supabase (tabla
- * gads_campaign_daily) y las agrega en la forma que espera PaidData
- * (src/services/types.ts). Meta Ads y TikTok Ads se añadirán del mismo modo
- * cuando tengan su propia tabla / integración.
+ * Lee las métricas diarias de cada plataforma de paid media conectada
+ * (Google Ads: tabla gads_campaign_daily; Meta Ads: tabla meta_campaign_daily)
+ * y las agrega en la forma que espera PaidData (src/services/types.ts).
+ * TikTok Ads se añadirá del mismo modo cuando tenga su propia tabla/integración.
  *
  * El deployment es compartido por todos los clientes: el cliente se resuelve
  * en cada petición a partir del slug de la URL (?client=), no de una variable
@@ -48,7 +48,7 @@ function checkAccess(req: any, client: { access_password_hash: string | null }, 
   return !!secret && !!token && verifyToken(token, slug, secret)
 }
 
-interface GadsRow {
+interface CampaignRow {
   date: string
   campaign_id: string
   campaign_name: string
@@ -59,6 +59,22 @@ interface GadsRow {
   conversions: string | number
   conversions_value: string | number
 }
+
+type PlatformName = 'Google Ads' | 'Meta Ads'
+
+/** Una fuente de paid media = su tabla, la columna que identifica la cuenta
+ * (para ignorar datos de una cuenta anterior si el cliente cambia de ID), y
+ * el nombre/color con el que aparece en el informe. */
+const PAID_SOURCES: Array<{
+  platform: PlatformName
+  dataSourcePlatform: string
+  table: string
+  accountColumn: string
+  color: string
+}> = [
+  { platform: 'Google Ads', dataSourcePlatform: 'google-ads', table: 'gads_campaign_daily', accountColumn: 'customer_id', color: '#34A853' },
+  { platform: 'Meta Ads', dataSourcePlatform: 'meta-ads', table: 'meta_campaign_daily', accountColumn: 'ad_account_id', color: '#1877F2' },
+]
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
@@ -115,76 +131,72 @@ async function handleRequest(req: any, res: any) {
     Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   }
 
-  // Si el cliente cambia de cuenta de Google Ads, las filas sincronizadas con
-  // la cuenta anterior no deben mezclarse con las nuevas: se filtra siempre
-  // por la cuenta actualmente configurada en data_sources.
-  let currentCustomerId = ''
   try {
-    const sourceResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&platform=eq.google-ads&select=external_id`,
+    // Cuenta actualmente configurada por plataforma (data_sources), para no
+    // mezclar datos de una cuenta anterior si el cliente cambia de ID.
+    const sourcesResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&platform=in.(${PAID_SOURCES.map((s) => s.dataSourcePlatform).join(',')})&select=platform,external_id`,
       { headers },
     )
-    if (sourceResp.ok) {
-      const [source] = (await sourceResp.json()) as Array<{ external_id: string | null }>
-      currentCustomerId = source?.external_id?.trim() ?? ''
-    }
-  } catch {
-    /* si falla esta consulta, seguimos sin filtrar por cuenta (mejor que un 500) */
-  }
+    const sourceRows: Array<{ platform: string; external_id: string | null }> = sourcesResp.ok
+      ? await sourcesResp.json()
+      : []
+    const accountByPlatform = new Map(sourceRows.map((s) => [s.platform, s.external_id?.trim() ?? '']))
 
-  const query = new URLSearchParams({
-    client_id: `eq.${client.id}`,
-    order: 'date.asc',
-  })
-  if (currentCustomerId) query.set('customer_id', `eq.${currentCustomerId}`)
-  // PostgREST admite repetir la misma columna para acotar un rango (AND).
-  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
+    const rowsByPlatform = await Promise.all(
+      PAID_SOURCES.map(async (source) => {
+        const accountId = accountByPlatform.get(source.dataSourcePlatform) ?? ''
+        if (!accountId) return [] as CampaignRow[]
 
-  try {
-    const resp = await fetch(`${SUPABASE_URL}/rest/v1/gads_campaign_daily?${query.toString()}`, {
-      headers,
-    })
+        const query = new URLSearchParams({ client_id: `eq.${client.id}`, order: 'date.asc' })
+        query.set(source.accountColumn, `eq.${accountId}`)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
 
-    if (!resp.ok) {
-      res.status(502).json({ error: `Supabase respondió ${resp.status} al consultar gads_campaign_daily.` })
-      return
-    }
-
-    const rows = (await resp.json()) as GadsRow[]
+        const resp = await fetch(`${SUPABASE_URL}/rest/v1/${source.table}?${query.toString()}`, { headers })
+        if (!resp.ok) {
+          throw new Error(`Supabase respondió ${resp.status} al consultar ${source.table}.`)
+        }
+        return (await resp.json()) as CampaignRow[]
+      }),
+    )
 
     const byCampaign = new Map<
       string,
-      { name: string; status: string; cost: number; impressions: number; clicks: number; conversions: number; conversionsValue: number }
+      { platform: PlatformName; name: string; status: string; cost: number; impressions: number; clicks: number; conversions: number; conversionsValue: number }
     >()
     const byDate = new Map<string, { inversion: number; conversiones: number }>()
 
-    for (const r of rows) {
-      const campaign = byCampaign.get(r.campaign_id) ?? {
-        name: r.campaign_name,
-        status: r.status,
-        cost: 0,
-        impressions: 0,
-        clicks: 0,
-        conversions: 0,
-        conversionsValue: 0,
-      }
-      campaign.status = r.status
-      campaign.cost += Number(r.cost)
-      campaign.impressions += Number(r.impressions)
-      campaign.clicks += Number(r.clicks)
-      campaign.conversions += Number(r.conversions)
-      campaign.conversionsValue += Number(r.conversions_value)
-      byCampaign.set(r.campaign_id, campaign)
+    PAID_SOURCES.forEach((source, i) => {
+      for (const r of rowsByPlatform[i]) {
+        const key = `${source.platform}::${r.campaign_id}`
+        const campaign = byCampaign.get(key) ?? {
+          platform: source.platform,
+          name: r.campaign_name,
+          status: r.status,
+          cost: 0,
+          impressions: 0,
+          clicks: 0,
+          conversions: 0,
+          conversionsValue: 0,
+        }
+        campaign.status = r.status
+        campaign.cost += Number(r.cost)
+        campaign.impressions += Number(r.impressions)
+        campaign.clicks += Number(r.clicks)
+        campaign.conversions += Number(r.conversions)
+        campaign.conversionsValue += Number(r.conversions_value)
+        byCampaign.set(key, campaign)
 
-      const day = byDate.get(r.date) ?? { inversion: 0, conversiones: 0 }
-      day.inversion += Number(r.cost)
-      day.conversiones += Number(r.conversions)
-      byDate.set(r.date, day)
-    }
+        const day = byDate.get(r.date) ?? { inversion: 0, conversiones: 0 }
+        day.inversion += Number(r.cost)
+        day.conversiones += Number(r.conversions)
+        byDate.set(r.date, day)
+      }
+    })
 
     const campaigns = Array.from(byCampaign.values()).map((c) => ({
-      platform: 'Google Ads' as const,
+      platform: c.platform,
       name: c.name,
       status: c.status === 'ENABLED' || c.status === 'Activa' ? ('Activa' as const) : ('Pausada' as const),
       inversion: round2(c.cost),
@@ -204,9 +216,19 @@ async function handleRequest(req: any, res: any) {
         conversiones: round2(v.conversiones),
       }))
 
-    const totalInversion = round2(campaigns.reduce((s, c) => s + c.inversion, 0))
+    const totalsByPlatform = new Map<PlatformName, number>()
+    for (const c of campaigns) totalsByPlatform.set(c.platform, (totalsByPlatform.get(c.platform) ?? 0) + c.inversion)
+    const totalInversion = round2([...totalsByPlatform.values()].reduce((s, v) => s + v, 0))
     const distribution = totalInversion
-      ? [{ name: 'Google Ads', value: totalInversion, percent: '100,0%', color: '#34A853' }]
+      ? PAID_SOURCES.filter((s) => totalsByPlatform.has(s.platform)).map((s) => {
+          const value = round2(totalsByPlatform.get(s.platform) ?? 0)
+          return {
+            name: s.platform,
+            value,
+            percent: `${((value / totalInversion) * 100).toFixed(1).replace('.', ',')}%`,
+            color: s.color,
+          }
+        })
       : []
 
     const topRoas = [...campaigns]
@@ -215,7 +237,7 @@ async function handleRequest(req: any, res: any) {
       .map((c) => ({ name: c.name, roas: c.roas }))
 
     res.status(200).json({ campaigns, invConv, distribution, topRoas })
-  } catch {
-    res.status(502).json({ error: 'No se pudo leer Google Ads desde Supabase.' })
+  } catch (e) {
+    res.status(502).json({ error: (e as Error).message || 'No se pudo leer paid media desde Supabase.' })
   }
 }

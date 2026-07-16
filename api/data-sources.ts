@@ -115,9 +115,16 @@ async function handleRequest(req: any, res: any) {
       return
     }
     // El Customer ID de Google Ads se muestra con guiones (XXX-XXX-XXXX) pero
-    // la API solo acepta dígitos: se normaliza aquí para que el guardado sea
-    // siempre válido independientemente de cómo lo escriba el usuario.
-    const externalId = platform === 'google-ads' ? rawExternalId.replace(/\D/g, '') : rawExternalId
+    // la API solo acepta dígitos; el Ad Account ID de Meta siempre lleva el
+    // prefijo "act_". Se normaliza aquí para que el guardado sea siempre
+    // válido independientemente de cómo lo escriba el usuario.
+    let externalId = rawExternalId.trim()
+    if (platform === 'google-ads') {
+      externalId = externalId.replace(/\D/g, '')
+    } else if (platform === 'meta-ads') {
+      const digits = externalId.replace(/^act_/i, '').trim()
+      externalId = digits ? `act_${digits}` : ''
+    }
     let client: { id: string; access_password_hash: string | null } | null
     try {
       client = await resolveClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)

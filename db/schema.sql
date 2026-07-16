@@ -75,6 +75,31 @@ create index if not exists idx_gads_daily_client_date
   on gads_campaign_daily (client_id, date);
 
 -- ----------------------------------------------------------------------------
+--  Meta Ads — métricas diarias por campaña (granularidad día). Misma forma
+--  que gads_campaign_daily; ad_account_id permite ignorar datos de una
+--  cuenta anterior si el cliente cambia de Ad Account ID.
+-- ----------------------------------------------------------------------------
+create table if not exists meta_campaign_daily (
+  id                 bigint generated always as identity primary key,
+  client_id          uuid not null references clients(id) on delete cascade,
+  ad_account_id      text,                    -- cuenta de Meta Ads que originó la fila (act_XXXXXXXXXX)
+  date               date not null,
+  campaign_id        text not null,
+  campaign_name      text not null,
+  status             text,                    -- 'Activa' | 'Pausada'
+  cost               numeric(14,2) not null default 0,   -- €
+  impressions        bigint not null default 0,
+  clicks             bigint not null default 0,
+  conversions        numeric(14,2) not null default 0,
+  conversions_value  numeric(14,2) not null default 0,   -- valor de conversión (para ROAS)
+  updated_at         timestamptz not null default now(),
+  unique (client_id, date, campaign_id)
+);
+
+create index if not exists idx_meta_daily_client_date
+  on meta_campaign_daily (client_id, date);
+
+-- ----------------------------------------------------------------------------
 --  Registro de sincronizaciones (alimenta "Historial de sincronizaciones").
 -- ----------------------------------------------------------------------------
 create table if not exists sync_logs (
