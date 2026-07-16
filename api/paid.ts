@@ -166,6 +166,11 @@ async function handleRequest(req: any, res: any) {
       { platform: PlatformName; name: string; status: string; cost: number; impressions: number; clicks: number; conversions: number; conversionsValue: number }
     >()
     const byDate = new Map<string, { inversion: number; conversiones: number }>()
+    // Serie diaria por plataforma, para que las pestañas de Google/Meta no
+    // mezclen inversión ni conversiones de otras plataformas.
+    const byDatePlatform = new Map<PlatformName, Map<string, { inversion: number; conversiones: number }>>(
+      PAID_SOURCES.map((s) => [s.platform, new Map()]),
+    )
 
     PAID_SOURCES.forEach((source, i) => {
       for (const r of rowsByPlatform[i]) {
@@ -192,6 +197,12 @@ async function handleRequest(req: any, res: any) {
         day.inversion += Number(r.cost)
         day.conversiones += Number(r.conversions)
         byDate.set(r.date, day)
+
+        const platformDates = byDatePlatform.get(source.platform)!
+        const platformDay = platformDates.get(r.date) ?? { inversion: 0, conversiones: 0 }
+        platformDay.inversion += Number(r.cost)
+        platformDay.conversiones += Number(r.conversions)
+        platformDates.set(r.date, platformDay)
       }
     })
 
@@ -216,6 +227,17 @@ async function handleRequest(req: any, res: any) {
         conversiones: round2(v.conversiones),
       }))
 
+    const invConvByPlatform: Record<string, { date: string; inversion: number; conversiones: number }[]> = {}
+    for (const source of PAID_SOURCES) {
+      invConvByPlatform[source.platform] = Array.from(byDatePlatform.get(source.platform)!.entries())
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([date, v]) => ({
+          date: formatDateLabel(date),
+          inversion: round2(v.inversion),
+          conversiones: round2(v.conversiones),
+        }))
+    }
+
     const totalsByPlatform = new Map<PlatformName, number>()
     for (const c of campaigns) totalsByPlatform.set(c.platform, (totalsByPlatform.get(c.platform) ?? 0) + c.inversion)
     const totalInversion = round2([...totalsByPlatform.values()].reduce((s, v) => s + v, 0))
@@ -236,7 +258,7 @@ async function handleRequest(req: any, res: any) {
       .slice(0, 5)
       .map((c) => ({ name: c.name, roas: c.roas }))
 
-    res.status(200).json({ campaigns, invConv, distribution, topRoas })
+    res.status(200).json({ campaigns, invConv, invConvByPlatform, distribution, topRoas })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudo leer paid media desde Supabase.' })
   }

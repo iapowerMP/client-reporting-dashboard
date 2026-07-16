@@ -331,15 +331,35 @@ export interface InvConvPoint {
   conversiones: number
 }
 
-export const paidInvConv: InvConvPoint[] = (() => {
-  const inv = makeSeries(201, 380, 620, 60)
-  const conv = makeSeries(202, 9, 15, 2.2)
-  return DATE_LABELS.map((date, i) => ({
-    date,
-    inversion: inv[i],
-    conversiones: conv[i],
-  }))
+/** Serie diaria de Inversión vs Conversiones, exclusiva de cada plataforma
+ * (evita mezclar datos de otras plataformas en sus pestañas dedicadas). */
+export const paidInvConvByPlatform: Record<Exclude<PaidTab, 'Todas'>, InvConvPoint[]> = (() => {
+  const metaInv = makeSeries(211, 210, 340, 35)
+  const metaConv = makeSeries(212, 5, 8, 1.3)
+  const googleInv = makeSeries(221, 120, 210, 25)
+  const googleConv = makeSeries(222, 3, 5.5, 1)
+  const tiktokInv = makeSeries(231, 50, 70, 10)
+  const tiktokConv = makeSeries(232, 1, 1.5, 0.4)
+  const build = (inv: number[], conv: number[]): InvConvPoint[] =>
+    DATE_LABELS.map((date, i) => ({ date, inversion: inv[i], conversiones: conv[i] }))
+  return {
+    'Meta Ads': build(metaInv, metaConv),
+    'Google Ads': build(googleInv, googleConv),
+    'TikTok Ads': build(tiktokInv, tiktokConv),
+  }
 })()
+
+export const paidInvConv: InvConvPoint[] = DATE_LABELS.map((date, i) => ({
+  date,
+  inversion:
+    paidInvConvByPlatform['Meta Ads'][i].inversion +
+    paidInvConvByPlatform['Google Ads'][i].inversion +
+    paidInvConvByPlatform['TikTok Ads'][i].inversion,
+  conversiones:
+    paidInvConvByPlatform['Meta Ads'][i].conversiones +
+    paidInvConvByPlatform['Google Ads'][i].conversiones +
+    paidInvConvByPlatform['TikTok Ads'][i].conversiones,
+}))
 
 /** Segmento del donut de distribución por plataforma. */
 export interface PlatformSlice {

@@ -53,6 +53,9 @@ const TOP_METRIC_OPTIONS: { key: TopMetric; label: string }[] = [
   { key: 'roas', label: 'ROAS' },
 ]
 
+/** Paleta para el donut de "Distribución por campaña" (pestañas de plataforma). */
+const CAMPAIGN_PALETTE = ['#F2FE54', '#60A5FA', '#A78BFA', '#34D399', '#FB923C', '#F472B6', '#9CA3AF']
+
 function formatTopValue(metric: TopMetric, value: number): string {
   switch (metric) {
     case 'inversion':
@@ -160,12 +163,33 @@ export default function PaidMedia() {
       ? data.campaigns.filter((c) => visiblePlatforms.includes(c.platform))
       : data.campaigns.filter((c) => c.platform === activeTab)
 
-  const visibleDistribution = data.distribution.filter((d) =>
-    visiblePlatforms.includes(d.name),
-  )
+  // En "Todas" se compara inversión por plataforma; en una pestaña de
+  // plataforma concreta, ese mismo gráfico no tendría sentido (una sola
+  // plataforma), así que se sustituye por el reparto por campaña de esa
+  // plataforma — sin mezclar nunca datos de otra.
+  const visibleDistribution =
+    activeTab === 'Todas'
+      ? data.distribution.filter((d) => visiblePlatforms.includes(d.name))
+      : (() => {
+          const total = rows.reduce((s, r) => s + r.inversion, 0)
+          return [...rows]
+            .sort((a, b) => b.inversion - a.inversion)
+            .map((r, i) => ({
+              name: r.name,
+              value: r.inversion,
+              percent: total ? `${((r.inversion / total) * 100).toFixed(1).replace('.', ',')}%` : '0,0%',
+              color: CAMPAIGN_PALETTE[i % CAMPAIGN_PALETTE.length],
+            }))
+        })()
   const distributionTotal = formatCurrency(
     visibleDistribution.reduce((s, d) => s + d.value, 0),
   )
+  const distributionTitle =
+    activeTab === 'Todas' ? 'Distribución por plataforma' : `Distribución por campaña — ${activeTab}`
+
+  // Serie exclusiva de la plataforma activa (o el total combinado en "Todas").
+  const invConvData =
+    activeTab === 'Todas' ? data.invConv : data.invConvByPlatform[activeTab] ?? []
 
   const topMetricLabel = TOP_METRIC_OPTIONS.find((o) => o.key === topMetric)?.label ?? 'ROAS'
   const topN = [...rows]
@@ -190,7 +214,7 @@ export default function PaidMedia() {
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
-              data={data.invConv}
+              data={invConvData}
               margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
             >
               <defs>
@@ -262,7 +286,7 @@ export default function PaidMedia() {
       {/* Fila de 2 gráficos */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Gráfico 2: Distribución por plataforma (donut) */}
-        <ChartCard title="Distribución por plataforma">
+        <ChartCard title={distributionTitle}>
           <div className="relative h-72">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>

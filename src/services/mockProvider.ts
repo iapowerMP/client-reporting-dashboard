@@ -9,6 +9,7 @@ import {
   recentActivity,
   campaigns,
   paidInvConv,
+  paidInvConvByPlatform,
   paidDistribution,
   topCampaignsByRoas,
   seoKpis,
@@ -42,6 +43,7 @@ export const mockProvider: DataProvider = {
     return {
       campaigns,
       invConv: paidInvConv,
+      invConvByPlatform: paidInvConvByPlatform,
       distribution: paidDistribution,
       topRoas: topCampaignsByRoas,
     }

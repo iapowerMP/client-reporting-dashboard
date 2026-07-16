@@ -34,6 +34,9 @@ export interface OverviewData {
 export interface PaidData {
   campaigns: Campaign[]
   invConv: InvConvPoint[]
+  /** Misma serie que `invConv` pero exclusiva de cada plataforma, para que
+   * las pestañas de plataforma no mezclen inversión/conversiones de otras. */
+  invConvByPlatform: Record<string, InvConvPoint[]>
   distribution: PlatformSlice[]
   topRoas: RoasBar[]
 }
