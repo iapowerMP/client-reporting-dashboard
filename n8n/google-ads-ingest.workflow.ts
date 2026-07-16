@@ -1,6 +1,9 @@
 /**
- * Workflow n8n: "Google Ads → Supabase (ingesta diaria, multi-cliente)"
+ * Workflow n8n: "CRD - Google Ads to Supabase (ingesta diaria, multi-cliente)"
  * ----------------------------------------------------------------------------
+ * El prefijo "CRD" (Client Reporting Dashboard) identifica los workflows de
+ * este proyecto entre los demás que puedan convivir en la misma instancia
+ * de n8n.
  * Copia versionada del workflow creado en n8n (SDK @n8n/workflow-sdk).
  * Instancia: https://n8n.themediapower.com/workflow/7uXY0RHlPfKkYJXr
  *
@@ -235,7 +238,7 @@ const upsert = node({
   output: [{}],
 })
 
-export default workflow('gads-ingest', 'Google Ads to Supabase (ingesta diaria, multi-cliente)')
+export default workflow('gads-ingest', 'CRD - Google Ads to Supabase (ingesta diaria, multi-cliente)')
   .add(scheduleTrigger)
   .to(getClients)
   .to(sharedConfig)
