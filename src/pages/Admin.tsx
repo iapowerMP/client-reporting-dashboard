@@ -43,7 +43,7 @@ export default function Admin() {
     setLoading(true)
     setLoadError(null)
     try {
-      const resp = await fetch('/api/admin-clients', {
+      const resp = await fetch('/api/admin?action=clients', {
         headers: { Authorization: `Bearer ${authToken}` },
       })
       if (resp.status === 401) {
@@ -72,7 +72,7 @@ export default function Admin() {
     setLoggingIn(true)
     setLoginError(null)
     try {
-      const resp = await fetch('/api/admin-login', {
+      const resp = await fetch('/api/admin?action=login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password }),

@@ -31,21 +31,23 @@ type OauthPlatform = 'meta' | 'ga4'
 
 /** Un flujo de "iniciar sesión" por plataforma: sus endpoints y el nombre
  * del campo que espera /api/oauth-<platform>-finalize. */
+// Cada plataforma vive en un único archivo /api (?action=...) para no
+// superar el límite de Serverless Functions del plan de Vercel.
 const OAUTH_CONFIG: Record<
   OauthPlatform,
   { startUrl: string; accountsUrl: string; finalizeUrl: string; finalizeField: string; providerLabel: 'Facebook' | 'Google' }
 > = {
   meta: {
-    startUrl: '/api/oauth-meta-start',
-    accountsUrl: '/api/oauth-meta-accounts',
-    finalizeUrl: '/api/oauth-meta-finalize',
+    startUrl: '/api/oauth-meta?action=start',
+    accountsUrl: '/api/oauth-meta?action=accounts',
+    finalizeUrl: '/api/oauth-meta?action=finalize',
     finalizeField: 'accountId',
     providerLabel: 'Facebook',
   },
   ga4: {
-    startUrl: '/api/oauth-ga4-start',
-    accountsUrl: '/api/oauth-ga4-accounts',
-    finalizeUrl: '/api/oauth-ga4-finalize',
+    startUrl: '/api/oauth-ga4?action=start',
+    accountsUrl: '/api/oauth-ga4?action=accounts',
+    finalizeUrl: '/api/oauth-ga4?action=finalize',
     finalizeField: 'propertyId',
     providerLabel: 'Google',
   },
@@ -485,9 +487,10 @@ export default function Settings() {
 
   const handleConnectOauth = (platform: OauthPlatform) => {
     const token = getStoredToken(clientSlug)
-    const params = new URLSearchParams({ client: clientSlug })
-    if (token) params.set('token', token)
-    window.location.href = `${OAUTH_CONFIG[platform].startUrl}?${params.toString()}`
+    const url = new URL(OAUTH_CONFIG[platform].startUrl, window.location.origin)
+    url.searchParams.set('client', clientSlug)
+    if (token) url.searchParams.set('token', token)
+    window.location.href = url.toString()
   }
 
   // Qué flujo de login está "recogiendo" al usuario tras volver de Facebook/Google
@@ -505,7 +508,9 @@ export default function Settings() {
     if (!activeOauthPlatform) return
     setOauthAccountsLoading(true)
     setOauthAccountsError(null)
-    fetch(`${OAUTH_CONFIG[activeOauthPlatform].accountsUrl}?client=${encodeURIComponent(clientSlug)}`)
+    const accountsUrl = new URL(OAUTH_CONFIG[activeOauthPlatform].accountsUrl, window.location.origin)
+    accountsUrl.searchParams.set('client', clientSlug)
+    fetch(accountsUrl.toString())
       .then(async (resp) => {
         const body = await resp.json().catch(() => ({}))
         if (!resp.ok) throw new Error(body?.error || 'No se pudieron cargar las cuentas.')
