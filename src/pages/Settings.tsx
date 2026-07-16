@@ -16,7 +16,7 @@ const MAX_LOGO_BYTES = 2 * 1024 * 1024
  * n8n/Supabase). El resto del catálogo existe para poder guardar ya su ID de
  * cuenta, pero no sincroniza nada todavía — el estado debe decirlo con
  * claridad en vez de simular una conexión que no existe. */
-const BUILT_INTEGRATIONS = new Set(['google-ads'])
+const BUILT_INTEGRATIONS = new Set(['google-ads', 'meta-ads'])
 
 interface DataSourceRow {
   platform: string

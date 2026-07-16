@@ -3,7 +3,7 @@
  * Body: { client: slug, platform }
  * Fuerza una sincronización inmediata de una fuente de datos concreta,
  * llamando al webhook de n8n correspondiente (en vez de esperar a la
- * ingesta programada). De momento solo Google Ads tiene integración real.
+ * ingesta programada). Google Ads y Meta Ads tienen integración real.
  *
  * Si el cliente tiene contraseña activada, exige el token de sesión
  * (Authorization: Bearer <token>, emitido por /api/verify-access).
@@ -43,9 +43,10 @@ function checkAccess(req: any, client: { access_password_hash: string | null }, 
   return !!secret && !!token && verifyToken(token, slug, secret)
 }
 
-/** Webhook de n8n por plataforma. De momento solo Google Ads existe. */
+/** Webhook de n8n por plataforma. */
 const SYNC_WEBHOOKS: Record<string, string | undefined> = {
   'google-ads': process.env.N8N_GADS_SYNC_WEBHOOK_URL,
+  'meta-ads': process.env.N8N_META_SYNC_WEBHOOK_URL,
 }
 
 export default async function handler(req: any, res: any) {
@@ -105,8 +106,8 @@ async function handleRequest(req: any, res: any) {
     return
   }
   const [source] = (await sourceResp.json()) as Array<{ external_id: string | null }>
-  const customerId = source?.external_id?.trim()
-  if (!customerId) {
+  const accountId = source?.external_id?.trim()
+  if (!accountId) {
     res.status(400).json({ error: 'Guarda primero el identificador de la cuenta antes de sincronizar.' })
     return
   }
@@ -114,10 +115,12 @@ async function handleRequest(req: any, res: any) {
   try {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 8000)
+    // Se envía bajo ambos nombres porque cada workflow de n8n (uno por
+    // plataforma) espera su propia clave (customerId, adAccountId...).
     const triggerResp = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ clientId: client.id, customerId }),
+      body: JSON.stringify({ clientId: client.id, customerId: accountId, adAccountId: accountId }),
       signal: controller.signal,
     })
     clearTimeout(timeout)
