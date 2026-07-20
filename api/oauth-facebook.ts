@@ -1,33 +1,52 @@
 /**
- * Vercel Function: /api/oauth-meta?action=start|callback|accounts|finalize
- * Flujo completo de "Conectar con Facebook" para Meta Ads, unificado en un
- * solo archivo (en vez de 4 funciones separadas) para no superar el límite
- * de Serverless Functions del plan de Vercel.
+ * Vercel Function: /api/oauth-facebook?service=ads|page|instagram&action=start|callback|accounts|finalize
+ * Flujo de "iniciar sesión con Facebook", compartido por todas las
+ * integraciones de Meta (Meta Ads, Página de Facebook, Instagram) en un solo
+ * archivo — para no superar el límite de Serverless Functions del plan de
+ * Vercel. Todas reutilizan la misma app de Meta (META_APP_ID/SECRET), cada
+ * una con su propio scope de solo lectura.
  *
- *   - action=start     (GET)  Redirige al diálogo de OAuth de Facebook. A
- *     diferencia del modo API (System User compartido, solo ve cuentas
- *     compartidas con nuestro Business Manager), aquí es el propio project
- *     manager/cliente quien concede acceso a las cuentas que ÉL administra.
- *   - action=callback   (GET)  Facebook redirige aquí con un `code`. Se
- *     canjea por un token de usuario de corta duración y luego por uno de
- *     larga duración (~60 días), guardado en una cookie firmada httpOnly de
- *     corta vida mientras el usuario elige la cuenta en el paso siguiente.
- *   - action=accounts   (GET)  Lee el token pendiente de la cookie y lista
- *     las cuentas publicitarias de esa persona.
- *   - action=finalize   (POST) Guarda en data_sources la cuenta elegida
- *     junto con el token de ESE usuario (auth_method = 'oauth').
+ *   - action=start     (GET)  Redirige al diálogo de OAuth de Facebook con
+ *     el scope de `service`.
+ *   - action=callback   (GET)  Facebook redirige aquí con ?code&state (el
+ *     `service` viaja dentro de `state`, firmado — una única URL de
+ *     redirección registrada sirve para los tres servicios). Canjea el code
+ *     por un token de usuario de corta duración y luego por uno de larga
+ *     duración (~60 días), guardado en una cookie firmada httpOnly de corta
+ *     vida (distinta por servicio) mientras el usuario elige la cuenta.
+ *   - action=accounts   (GET)  Lista las cuentas/páginas/cuentas de
+ *     Instagram de ESE servicio a las que la persona tiene acceso.
+ *   - action=finalize   (POST) Guarda en data_sources la cuenta elegida.
+ *     Para 'page'/'instagram', las llamadas a la API se autentican con el
+ *     token de la PÁGINA (no el del usuario) — se obtiene aquí mismo, en el
+ *     momento de finalizar, para que nunca llegue al navegador.
  *
  * Importante: la URL de redirección registrada en la app de Meta y en la
  * variable de entorno META_OAUTH_REDIRECT_URI debe ser
- * ".../api/oauth-meta?action=callback" (Facebook añade sus propios query
- * params — code, state — a continuación, sin conflicto).
+ * ".../api/oauth-facebook?action=callback" (sin &service=, se recupera del
+ * `state`).
  */
 import { timingSafeEqual, createHmac } from 'crypto'
 
+type FacebookService = 'ads' | 'page' | 'instagram'
+
+const SERVICE_CONFIG: Record<FacebookService, { scope: string; platform: string; pendingCookie: string }> = {
+  ads: { scope: 'ads_read', platform: 'meta-ads', pendingCookie: 'mp_facebook_oauth_pending_ads' },
+  page: { scope: 'pages_show_list,pages_read_engagement', platform: 'facebook', pendingCookie: 'mp_facebook_oauth_pending_page' },
+  instagram: {
+    scope: 'pages_show_list,instagram_basic,instagram_manage_insights',
+    platform: 'instagram',
+    pendingCookie: 'mp_facebook_oauth_pending_instagram',
+  },
+}
+
 const STATE_TTL_MS = 10 * 60 * 1000
-const PENDING_COOKIE = 'mp_meta_oauth_pending'
 const PENDING_TTL_S = 10 * 60
 const LONG_LIVED_TOKEN_TTL_S = 60 * 24 * 60 * 60 // Meta emite el token de larga duración con ~60 días de vida.
+
+function isFacebookService(value: unknown): value is FacebookService {
+  return value === 'ads' || value === 'page' || value === 'instagram'
+}
 
 async function resolveClient(
   supabaseUrl: string,
@@ -61,23 +80,23 @@ function checkAccess(req: any, client: { access_password_hash: string | null }, 
   return !!token && verifyToken(token, slug, secret)
 }
 
-function signState(slug: string, secret: string): string {
+function signState(slug: string, service: FacebookService, secret: string): string {
   const expiry = Date.now() + STATE_TTL_MS
-  const sig = createHmac('sha256', secret).update(`oauth-state:${slug}:${expiry}`).digest('hex')
-  return Buffer.from(`${slug}.${expiry}.${sig}`).toString('base64url')
+  const sig = createHmac('sha256', secret).update(`oauth-state:${slug}:${service}:${expiry}`).digest('hex')
+  return Buffer.from(`${slug}.${service}.${expiry}.${sig}`).toString('base64url')
 }
 
-function verifyState(state: string, secret: string): { slug: string } | null {
+function verifyState(state: string, secret: string): { slug: string; service: FacebookService } | null {
   try {
     const decoded = Buffer.from(state, 'base64url').toString('utf8')
-    const [slug, expiryStr, sig] = decoded.split('.')
+    const [slug, service, expiryStr, sig] = decoded.split('.')
     const expiry = Number(expiryStr)
-    if (!slug || !expiry || !sig || Date.now() > expiry) return null
-    const expected = createHmac('sha256', secret).update(`oauth-state:${slug}:${expiry}`).digest('hex')
+    if (!slug || !isFacebookService(service) || !expiry || !sig || Date.now() > expiry) return null
+    const expected = createHmac('sha256', secret).update(`oauth-state:${slug}:${service}:${expiry}`).digest('hex')
     const a = Buffer.from(sig, 'hex')
     const b = Buffer.from(expected, 'hex')
     if (a.length !== b.length || !timingSafeEqual(a, b)) return null
-    return { slug }
+    return { slug, service }
   } catch {
     return null
   }
@@ -147,12 +166,18 @@ export default async function handler(req: any, res: any) {
         res.status(400).json({ error: 'Falta o es inválido el parámetro action.' })
     }
   } catch (e) {
-    res.status(500).json({ error: `Error inesperado en /api/oauth-meta: ${(e as Error).message}` })
+    res.status(500).json({ error: `Error inesperado en /api/oauth-facebook: ${(e as Error).message}` })
   }
 }
 
-/** action=start — GET ?client=<slug>&token=<sesión opcional> */
+/** action=start — GET ?service=ads|page|instagram&client=<slug>&token=<sesión opcional> */
 async function handleStart(req: any, res: any) {
+  const service = req.query?.service
+  if (!isFacebookService(service)) {
+    res.status(400).send('Falta o es inválido el parámetro service (ads | page | instagram).')
+    return
+  }
+
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET, META_APP_ID, META_OAUTH_REDIRECT_URI } = process.env
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !AUTH_TOKEN_SECRET) {
     res.status(500).send('Faltan variables de entorno en el servidor (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET).')
@@ -182,12 +207,12 @@ async function handleStart(req: any, res: any) {
     }
   }
 
-  const state = signState(slug, AUTH_TOKEN_SECRET)
+  const state = signState(slug, service, AUTH_TOKEN_SECRET)
   const params = new URLSearchParams({
     client_id: META_APP_ID,
     redirect_uri: META_OAUTH_REDIRECT_URI,
     state,
-    scope: 'ads_read',
+    scope: SERVICE_CONFIG[service].scope,
     response_type: 'code',
   })
   res.writeHead(302, { Location: `https://www.facebook.com/v25.0/dialog/oauth?${params.toString()}` })
@@ -247,17 +272,23 @@ async function handleCallback(req: any, res: any) {
     const cookieValue = signPendingCookie({ slug: state.slug, token: longBody.access_token, exp }, AUTH_TOKEN_SECRET)
     res.setHeader(
       'Set-Cookie',
-      `${PENDING_COOKIE}=${cookieValue}; Max-Age=${PENDING_TTL_S}; Path=/api/oauth-meta; HttpOnly; Secure; SameSite=Lax`,
+      `${SERVICE_CONFIG[state.service].pendingCookie}=${cookieValue}; Max-Age=${PENDING_TTL_S}; Path=/api/oauth-facebook; HttpOnly; Secure; SameSite=Lax`,
     )
-    res.writeHead(302, { Location: `${reportOrigin()}/c/${state.slug}/settings?meta_oauth=picking` })
+    res.writeHead(302, { Location: `${reportOrigin()}/c/${state.slug}/settings?facebook_oauth=${state.service}` })
     res.end()
   } catch (e) {
     res.status(502).send(htmlError((e as Error).message))
   }
 }
 
-/** action=accounts — GET ?client=<slug> */
+/** action=accounts — GET ?service=ads|page|instagram&client=<slug> */
 async function handleAccounts(req: any, res: any) {
+  const service = req.query?.service
+  if (!isFacebookService(service)) {
+    res.status(400).json({ error: 'Falta o es inválido el parámetro service (ads | page | instagram).' })
+    return
+  }
+
   const { AUTH_TOKEN_SECRET } = process.env
   if (!AUTH_TOKEN_SECRET) {
     res.status(500).json({ error: 'Falta la variable de entorno AUTH_TOKEN_SECRET.' })
@@ -271,36 +302,68 @@ async function handleAccounts(req: any, res: any) {
   }
 
   const cookies = parseCookies(req.headers?.cookie)
-  const token = cookies[PENDING_COOKIE] ? readPendingToken(cookies[PENDING_COOKIE], slug, AUTH_TOKEN_SECRET) : null
+  const cookieName = SERVICE_CONFIG[service].pendingCookie
+  const token = cookies[cookieName] ? readPendingToken(cookies[cookieName], slug, AUTH_TOKEN_SECRET) : null
   if (!token) {
     res.status(401).json({ error: 'La sesión de conexión con Facebook ha caducado. Vuelve a pulsar "Conectar con Facebook".' })
     return
   }
 
   try {
+    if (service === 'ads') {
+      const resp = await fetch(
+        `https://graph.facebook.com/v25.0/me/adaccounts?${new URLSearchParams({
+          fields: 'account_id,name,account_status',
+          limit: '200',
+          access_token: token,
+        }).toString()}`,
+      )
+      const body = (await resp.json()) as { data?: Array<{ account_id: string; name: string; account_status: number }>; error?: { message: string } }
+      if (!resp.ok) throw new Error(body.error?.message || `Facebook respondió ${resp.status}.`)
+      const accounts = (body.data ?? []).map((a) => ({
+        id: `act_${a.account_id}`,
+        name: a.name,
+        active: a.account_status === 1,
+      }))
+      res.status(200).json({ accounts })
+      return
+    }
+
+    // service === 'page' | 'instagram' — ambas parten de la lista de páginas.
     const resp = await fetch(
-      `https://graph.facebook.com/v25.0/me/adaccounts?${new URLSearchParams({
-        fields: 'account_id,name,account_status',
+      `https://graph.facebook.com/v25.0/me/accounts?${new URLSearchParams({
+        fields: 'id,name,instagram_business_account{id,username}',
         limit: '200',
         access_token: token,
       }).toString()}`,
     )
-    const body = (await resp.json()) as { data?: Array<{ account_id: string; name: string; account_status: number }>; error?: { message: string } }
-    if (!resp.ok) {
-      throw new Error(body.error?.message || `Facebook respondió ${resp.status}.`)
+    const body = (await resp.json()) as {
+      data?: Array<{ id: string; name: string; instagram_business_account?: { id: string; username: string } }>
+      error?: { message: string }
     }
-    const accounts = (body.data ?? []).map((a) => ({
-      id: `act_${a.account_id}`,
-      name: a.name,
-      active: a.account_status === 1,
-    }))
+    if (!resp.ok) throw new Error(body.error?.message || `Facebook respondió ${resp.status}.`)
+
+    if (service === 'page') {
+      const accounts = (body.data ?? []).map((p) => ({ id: p.id, name: p.name }))
+      res.status(200).json({ accounts })
+      return
+    }
+
+    // service === 'instagram': solo páginas con una cuenta de Instagram Business/Creator vinculada.
+    const accounts = (body.data ?? [])
+      .filter((p) => p.instagram_business_account)
+      .map((p) => ({
+        id: p.instagram_business_account!.id,
+        name: `@${p.instagram_business_account!.username} (${p.name})`,
+        pageId: p.id,
+      }))
     res.status(200).json({ accounts })
   } catch (e) {
-    res.status(502).json({ error: (e as Error).message || 'No se pudieron listar las cuentas de Meta Ads.' })
+    res.status(502).json({ error: (e as Error).message || 'No se pudieron listar las cuentas de Facebook.' })
   }
 }
 
-/** action=finalize — POST { client, accountId } */
+/** action=finalize — POST { client, service, accountId, pageId? } */
 async function handleFinalize(req: any, res: any) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Método no permitido.' })
@@ -315,9 +378,9 @@ async function handleFinalize(req: any, res: any) {
     return
   }
 
-  const { client: slug, accountId } = req.body ?? {}
-  if (!slug || !accountId) {
-    res.status(400).json({ error: 'Faltan campos: client y accountId son obligatorios.' })
+  const { client: slug, service, accountId, pageId } = req.body ?? {}
+  if (!slug || !isFacebookService(service) || !accountId) {
+    res.status(400).json({ error: 'Faltan campos: client, service y accountId son obligatorios.' })
     return
   }
 
@@ -332,13 +395,38 @@ async function handleFinalize(req: any, res: any) {
   }
 
   const cookies = parseCookies(req.headers?.cookie)
-  const token = cookies[PENDING_COOKIE] ? readPendingToken(cookies[PENDING_COOKIE], slug, AUTH_TOKEN_SECRET) : null
-  if (!token) {
+  const cookieName = SERVICE_CONFIG[service].pendingCookie
+  const userToken = cookies[cookieName] ? readPendingToken(cookies[cookieName], slug, AUTH_TOKEN_SECRET) : null
+  if (!userToken) {
     res.status(401).json({ error: 'La sesión de conexión con Facebook ha caducado. Vuelve a pulsar "Conectar con Facebook".' })
     return
   }
 
   try {
+    // 'ads' se autentica con el token del usuario directamente; 'page' e
+    // 'instagram' se autentican con el token de LA PÁGINA (Meta lo exige
+    // para leer insights) — se pide aquí, en el servidor, para que nunca
+    // llegue al navegador.
+    let storedToken = userToken
+    if (service === 'page' || service === 'instagram') {
+      const targetPageId = service === 'page' ? accountId : pageId
+      if (!targetPageId) {
+        res.status(400).json({ error: 'Falta el campo pageId (necesario para Instagram).' })
+        return
+      }
+      const pageResp = await fetch(
+        `https://graph.facebook.com/v25.0/${targetPageId}?${new URLSearchParams({
+          fields: 'access_token',
+          access_token: userToken,
+        }).toString()}`,
+      )
+      const pageBody = (await pageResp.json()) as { access_token?: string; error?: { message: string } }
+      if (!pageResp.ok || !pageBody.access_token) {
+        throw new Error(pageBody.error?.message || `Facebook respondió ${pageResp.status} al obtener el token de la página.`)
+      }
+      storedToken = pageBody.access_token
+    }
+
     const expiresAt = new Date(Date.now() + LONG_LIVED_TOKEN_TTL_S * 1000).toISOString()
     const resp = await fetch(`${SUPABASE_URL}/rest/v1/data_sources?on_conflict=client_id,platform`, {
       method: 'POST',
@@ -351,11 +439,11 @@ async function handleFinalize(req: any, res: any) {
       body: JSON.stringify([
         {
           client_id: client.id,
-          platform: 'meta-ads',
+          platform: SERVICE_CONFIG[service].platform,
           external_id: accountId,
           status: 'conectado',
           auth_method: 'oauth',
-          oauth_access_token: token,
+          oauth_access_token: storedToken,
           oauth_token_expires_at: expiresAt,
         },
       ]),
@@ -364,10 +452,10 @@ async function handleFinalize(req: any, res: any) {
       res.status(502).json({ error: `Supabase respondió ${resp.status} al guardar data_sources.` })
       return
     }
-    res.setHeader('Set-Cookie', `${PENDING_COOKIE}=; Max-Age=0; Path=/api/oauth-meta; HttpOnly; Secure; SameSite=Lax`)
+    res.setHeader('Set-Cookie', `${cookieName}=; Max-Age=0; Path=/api/oauth-facebook; HttpOnly; Secure; SameSite=Lax`)
     const [row] = await resp.json()
     res.status(200).json({ source: row })
-  } catch {
-    res.status(502).json({ error: 'No se pudo guardar en Supabase.' })
+  } catch (e) {
+    res.status(502).json({ error: (e as Error).message || 'No se pudo guardar en Supabase.' })
   }
 }
