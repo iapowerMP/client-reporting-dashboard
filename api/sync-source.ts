@@ -49,6 +49,9 @@ const SYNC_WEBHOOKS: Record<string, string | undefined> = {
   'meta-ads': process.env.N8N_META_SYNC_WEBHOOK_URL,
   ga4: process.env.N8N_GA4_SYNC_WEBHOOK_URL,
   gsc: process.env.N8N_GSC_SYNC_WEBHOOK_URL,
+  facebook: process.env.N8N_FACEBOOK_SYNC_WEBHOOK_URL,
+  instagram: process.env.N8N_INSTAGRAM_SYNC_WEBHOOK_URL,
+  youtube: process.env.N8N_YOUTUBE_SYNC_WEBHOOK_URL,
 }
 
 export default async function handler(req: any, res: any) {

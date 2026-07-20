@@ -16,33 +16,50 @@ const MAX_LOGO_BYTES = 2 * 1024 * 1024
  * n8n/Supabase). El resto del catálogo existe para poder guardar ya su ID de
  * cuenta, pero no sincroniza nada todavía — el estado debe decirlo con
  * claridad en vez de simular una conexión que no existe. */
-const BUILT_INTEGRATIONS = new Set(['google-ads', 'meta-ads', 'ga4', 'gsc'])
+const BUILT_INTEGRATIONS = new Set(['google-ads', 'meta-ads', 'ga4', 'gsc', 'facebook', 'instagram', 'youtube'])
 
 /** Plataformas que, además de la conexión manual por API, admiten "iniciar
  * sesión" (OAuth): el propio PM/cliente concede acceso a las cuentas que él
  * mismo administra, sin depender de que estén compartidas con nuestro
  * Business Manager. */
-const OAUTH_CAPABLE = new Set(['meta-ads', 'ga4', 'gsc'])
+const OAUTH_CAPABLE = new Set(['meta-ads', 'ga4', 'gsc', 'facebook', 'instagram', 'youtube'])
 
 /** Plataformas que SOLO admiten inicio de sesión (sin campo manual de ID). */
-const OAUTH_ONLY = new Set(['ga4', 'gsc'])
+const OAUTH_ONLY = new Set(['ga4', 'gsc', 'facebook', 'instagram', 'youtube'])
 
-type OauthPlatform = 'meta' | 'ga4' | 'gsc'
+type OauthPlatform = 'meta' | 'facebook' | 'instagram' | 'ga4' | 'gsc' | 'youtube'
 
 /** Un flujo de "iniciar sesión" por plataforma: sus endpoints y el nombre
- * del campo que espera el finalize. Meta vive en su propio archivo; todas
- * las integraciones de Google comparten /api/oauth-google (?service=...)
- * — un único archivo por proveedor para no superar el límite de Serverless
- * Functions del plan de Vercel. */
+ * del campo que espera el finalize. Las integraciones de Meta comparten
+ * /api/oauth-facebook (?service=...) y las de Google /api/oauth-google
+ * (?service=...) — un único archivo por proveedor para no superar el
+ * límite de Serverless Functions del plan de Vercel. */
 const OAUTH_CONFIG: Record<
   OauthPlatform,
   { startUrl: string; accountsUrl: string; finalizeUrl: string; finalizeField: string; finalizeExtra?: Record<string, string>; providerLabel: 'Facebook' | 'Google' }
 > = {
   meta: {
-    startUrl: '/api/oauth-meta?action=start',
-    accountsUrl: '/api/oauth-meta?action=accounts',
-    finalizeUrl: '/api/oauth-meta?action=finalize',
+    startUrl: '/api/oauth-facebook?service=ads&action=start',
+    accountsUrl: '/api/oauth-facebook?service=ads&action=accounts',
+    finalizeUrl: '/api/oauth-facebook?action=finalize',
     finalizeField: 'accountId',
+    finalizeExtra: { service: 'ads' },
+    providerLabel: 'Facebook',
+  },
+  facebook: {
+    startUrl: '/api/oauth-facebook?service=page&action=start',
+    accountsUrl: '/api/oauth-facebook?service=page&action=accounts',
+    finalizeUrl: '/api/oauth-facebook?action=finalize',
+    finalizeField: 'accountId',
+    finalizeExtra: { service: 'page' },
+    providerLabel: 'Facebook',
+  },
+  instagram: {
+    startUrl: '/api/oauth-facebook?service=instagram&action=start',
+    accountsUrl: '/api/oauth-facebook?service=instagram&action=accounts',
+    finalizeUrl: '/api/oauth-facebook?action=finalize',
+    finalizeField: 'accountId',
+    finalizeExtra: { service: 'instagram' },
     providerLabel: 'Facebook',
   },
   ga4: {
@@ -61,13 +78,24 @@ const OAUTH_CONFIG: Record<
     finalizeExtra: { service: 'gsc' },
     providerLabel: 'Google',
   },
+  youtube: {
+    startUrl: '/api/oauth-google?service=youtube&action=start',
+    accountsUrl: '/api/oauth-google?service=youtube&action=accounts',
+    finalizeUrl: '/api/oauth-google?action=finalize',
+    finalizeField: 'accountId',
+    finalizeExtra: { service: 'youtube' },
+    providerLabel: 'Google',
+  },
 }
 
 /** A qué flujo de login corresponde cada conexión del catálogo. */
 const OAUTH_PLATFORM_BY_CONNECTION: Record<string, OauthPlatform> = {
   'meta-ads': 'meta',
+  facebook: 'facebook',
+  instagram: 'instagram',
   ga4: 'ga4',
   gsc: 'gsc',
+  youtube: 'youtube',
 }
 
 interface DataSourceRow {
@@ -185,6 +213,9 @@ interface OauthAccount {
   id: string
   name: string
   active?: boolean
+  /** Solo en Instagram: la Página de Facebook a la que está vinculada esa
+   * cuenta (necesaria para pedir su token de página al finalizar). */
+  pageId?: string
 }
 
 function OauthAccountPicker({
@@ -504,17 +535,26 @@ export default function Settings() {
     window.location.href = url.toString()
   }
 
+  // Servicio (?service= de cada endpoint) -> plataforma del frontend.
+  const FACEBOOK_SERVICE_TO_PLATFORM: Record<string, OauthPlatform> = {
+    ads: 'meta',
+    page: 'facebook',
+    instagram: 'instagram',
+  }
+  const GOOGLE_SERVICE_TO_PLATFORM: Record<string, OauthPlatform> = {
+    ga4: 'ga4',
+    gsc: 'gsc',
+    youtube: 'youtube',
+  }
+
   // Qué flujo de login está "recogiendo" al usuario tras volver de Facebook/Google:
-  // Meta redirige con ?meta_oauth=picking; todas las integraciones de Google
-  // comparten /api/oauth-google y redirigen con ?google_oauth=<service>.
+  // las integraciones de Meta comparten /api/oauth-facebook y redirigen con
+  // ?facebook_oauth=<service>; las de Google, /api/oauth-google con
+  // ?google_oauth=<service>.
   const activeOauthPlatform: OauthPlatform | null =
-    searchParams.get('meta_oauth') === 'picking'
-      ? 'meta'
-      : searchParams.get('google_oauth') === 'ga4'
-        ? 'ga4'
-        : searchParams.get('google_oauth') === 'gsc'
-          ? 'gsc'
-          : null
+    FACEBOOK_SERVICE_TO_PLATFORM[searchParams.get('facebook_oauth') ?? ''] ??
+    GOOGLE_SERVICE_TO_PLATFORM[searchParams.get('google_oauth') ?? ''] ??
+    null
 
   const [oauthAccounts, setOauthAccounts] = useState<OauthAccount[] | null>(null)
   const [oauthAccountsLoading, setOauthAccountsLoading] = useState(false)
@@ -542,7 +582,7 @@ export default function Settings() {
 
   const closeOauthPicker = () => {
     const next = new URLSearchParams(searchParams)
-    next.delete('meta_oauth')
+    next.delete('facebook_oauth')
     next.delete('google_oauth')
     setSearchParams(next, { replace: true })
     setOauthAccounts(null)
@@ -553,12 +593,18 @@ export default function Settings() {
   const handleConfirmOauthAccount = async () => {
     if (!activeOauthPlatform || !selectedOauthAccount) return
     const cfg = OAUTH_CONFIG[activeOauthPlatform]
+    const account = oauthAccounts?.find((a) => a.id === selectedOauthAccount)
     setFinalizingOauth(true)
     try {
       const resp = await fetch(cfg.finalizeUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
-        body: JSON.stringify({ client: clientSlug, [cfg.finalizeField]: selectedOauthAccount, ...cfg.finalizeExtra }),
+        body: JSON.stringify({
+          client: clientSlug,
+          [cfg.finalizeField]: selectedOauthAccount,
+          ...cfg.finalizeExtra,
+          ...(account?.pageId ? { pageId: account.pageId } : {}),
+        }),
       })
       const body = await resp.json().catch(() => ({}))
       if (!resp.ok) throw new Error(body?.error)
@@ -805,7 +851,17 @@ export default function Settings() {
       {activeOauthPlatform && (
         <OauthAccountPicker
           platformLabel={
-            activeOauthPlatform === 'meta' ? 'Meta Ads' : activeOauthPlatform === 'ga4' ? 'Google Analytics 4' : 'Search Console'
+            activeOauthPlatform === 'meta'
+              ? 'Meta Ads'
+              : activeOauthPlatform === 'facebook'
+                ? 'Facebook'
+                : activeOauthPlatform === 'instagram'
+                  ? 'Instagram'
+                  : activeOauthPlatform === 'ga4'
+                    ? 'Google Analytics 4'
+                    : activeOauthPlatform === 'gsc'
+                      ? 'Search Console'
+                      : 'YouTube'
           }
           loading={oauthAccountsLoading}
           error={oauthAccountsError}

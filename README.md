@@ -69,9 +69,10 @@ construyan.
 > **Límite de Serverless Functions (plan Hobby de Vercel):** máximo 12 por
 > despliegue. Los endpoints con varios pasos relacionados (login OAuth,
 > panel de admin) se agrupan en un solo archivo con un parámetro `?action=`
-> en vez de un archivo por paso — revisa `api/oauth-meta.ts`,
-> `api/oauth-google.ts` y `api/admin.ts` como referencia antes de añadir un
-> archivo nuevo en `/api`.
+> (y, si sirve a varias integraciones, además `?service=`) en vez de un
+> archivo por paso — revisa `api/oauth-facebook.ts` (Meta Ads/Facebook/
+> Instagram), `api/oauth-google.ts` (GA4/Search Console/YouTube) y
+> `api/admin.ts` como referencia antes de añadir un archivo nuevo en `/api`.
 
 ### Credenciales por cliente
 
@@ -93,13 +94,19 @@ deben resolverse en el servidor; nunca se exponen en el navegador.
 >   (Ad Account ID + System User compartido de nuestro Business Manager) o
 >   inicio de sesión con Facebook (el PM/cliente conecta cualquier cuenta que
 >   administre, sin depender de nuestro BM).
-> - **GA4** y **Search Console** — solo por inicio de sesión con Google (sin
->   modo API): el PM/cliente conecta la propiedad GA4 o el sitio verificado
->   que administre. Comparten el mismo cliente OAuth de Google Cloud y el
->   mismo endpoint (`/api/oauth-google`), cada una con su propio scope.
-> - El resto (TikTok Ads, Semrush, Instagram, Facebook, TikTok, YouTube)
->   todavía no tiene integración real; sus vistas muestran un estado vacío
->   honesto en vez de datos inventados.
+> - **GA4**, **Search Console** y **YouTube** — solo por inicio de sesión con
+>   Google (sin modo API): el PM/cliente conecta la propiedad GA4, el sitio
+>   verificado o el canal que administre. Comparten el mismo cliente OAuth de
+>   Google Cloud y el mismo endpoint (`/api/oauth-google`), cada una con su
+>   propio scope.
+> - **Facebook** e **Instagram** — solo por inicio de sesión con Facebook
+>   (sin modo API): el PM/cliente conecta la Página o la cuenta de Instagram
+>   vinculada que administre. Comparten el mismo cliente OAuth de Meta y el
+>   mismo endpoint (`/api/oauth-facebook`) que Meta Ads, cada una con su
+>   propio scope.
+> - El resto (TikTok Ads, Semrush, TikTok orgánico) todavía no tiene
+>   integración real; sus vistas muestran un estado vacío honesto en vez de
+>   datos inventados.
 
 ## Visibilidad de fuentes
 

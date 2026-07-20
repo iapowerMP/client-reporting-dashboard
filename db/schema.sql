@@ -184,6 +184,59 @@ create index if not exists idx_gsc_page_daily_client_date
   on gsc_page_daily (client_id, date);
 
 -- ----------------------------------------------------------------------------
+--  Redes Sociales — una fila por cliente y día (no hay una dimensión
+--  adicional como canal/query: son métricas globales de la página/cuenta).
+--  Simplificación actual (V1): solo snapshots fáciles de obtener con scopes
+--  de solo lectura básicos (sin pedir permisos más sensibles todavía).
+--  followers es un snapshot (no un delta), así que la serie histórica se
+--  reconstruye sola con cada sincronización diaria.
+-- ----------------------------------------------------------------------------
+create table if not exists facebook_page_daily (
+  id               bigint generated always as identity primary key,
+  client_id        uuid not null references clients(id) on delete cascade,
+  page_id          text,                    -- página de Facebook que originó la fila
+  date             date not null,
+  followers        bigint not null default 0,   -- page_fans (snapshot)
+  impressions      bigint not null default 0,   -- page_impressions (del día)
+  engaged_users    bigint not null default 0,   -- page_engaged_users (del día)
+  updated_at       timestamptz not null default now(),
+  unique (client_id, date)
+);
+
+create index if not exists idx_facebook_page_daily_client_date
+  on facebook_page_daily (client_id, date);
+
+create table if not exists instagram_daily (
+  id               bigint generated always as identity primary key,
+  client_id        uuid not null references clients(id) on delete cascade,
+  ig_user_id       text,                    -- cuenta de Instagram Business/Creator que originó la fila
+  date             date not null,
+  followers        bigint not null default 0,   -- followers_count (snapshot)
+  impressions      bigint not null default 0,   -- del día
+  reach            bigint not null default 0,   -- del día
+  updated_at       timestamptz not null default now(),
+  unique (client_id, date)
+);
+
+create index if not exists idx_instagram_daily_client_date
+  on instagram_daily (client_id, date);
+
+create table if not exists youtube_daily (
+  id               bigint generated always as identity primary key,
+  client_id        uuid not null references clients(id) on delete cascade,
+  channel_id       text,                    -- canal de YouTube que originó la fila
+  date             date not null,
+  subscribers      bigint not null default 0,   -- subscriberCount (snapshot; oculto por el canal en algunos casos)
+  views            bigint not null default 0,   -- viewCount total acumulado (snapshot, no del día)
+  video_count      bigint not null default 0,   -- videoCount (snapshot)
+  updated_at       timestamptz not null default now(),
+  unique (client_id, date)
+);
+
+create index if not exists idx_youtube_daily_client_date
+  on youtube_daily (client_id, date);
+
+-- ----------------------------------------------------------------------------
 --  Registro de sincronizaciones (alimenta "Historial de sincronizaciones").
 -- ----------------------------------------------------------------------------
 create table if not exists sync_logs (

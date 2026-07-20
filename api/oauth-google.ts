@@ -1,11 +1,11 @@
 /**
- * Vercel Function: /api/oauth-google?service=ga4|gsc&action=start|callback|accounts|finalize
+ * Vercel Function: /api/oauth-google?service=ga4|gsc|youtube&action=start|callback|accounts|finalize
  * Flujo de "iniciar sesión con Google", compartido por todas las
- * integraciones de Google (GA4, Search Console, y las que se añadan más
- * adelante) en un solo archivo — para no superar el límite de Serverless
- * Functions del plan de Vercel. Todas reutilizan el mismo cliente OAuth de
- * Google Cloud (GOOGLE_OAUTH_CLIENT_ID/SECRET), cada una con su propio scope
- * de solo lectura.
+ * integraciones de Google (GA4, Search Console, YouTube, y las que se
+ * añadan más adelante) en un solo archivo — para no superar el límite de
+ * Serverless Functions del plan de Vercel. Todas reutilizan el mismo
+ * cliente OAuth de Google Cloud (GOOGLE_OAUTH_CLIENT_ID/SECRET), cada una
+ * con su propio scope de solo lectura.
  *
  *   - action=start     (GET)  Redirige al diálogo de OAuth de Google con el
  *     scope de `service`. access_type=offline + prompt=consent fuerzan a que
@@ -28,7 +28,7 @@
  */
 import { timingSafeEqual, createHmac } from 'crypto'
 
-type GoogleService = 'ga4' | 'gsc'
+type GoogleService = 'ga4' | 'gsc' | 'youtube'
 
 const SERVICE_CONFIG: Record<GoogleService, { scope: string; platform: string; pendingCookie: string }> = {
   ga4: {
@@ -41,13 +41,18 @@ const SERVICE_CONFIG: Record<GoogleService, { scope: string; platform: string; p
     platform: 'gsc',
     pendingCookie: 'mp_google_oauth_pending_gsc',
   },
+  youtube: {
+    scope: 'https://www.googleapis.com/auth/youtube.readonly',
+    platform: 'youtube',
+    pendingCookie: 'mp_google_oauth_pending_youtube',
+  },
 }
 
 const STATE_TTL_MS = 10 * 60 * 1000
 const PENDING_TTL_S = 10 * 60
 
 function isGoogleService(value: unknown): value is GoogleService {
-  return value === 'ga4' || value === 'gsc'
+  return value === 'ga4' || value === 'gsc' || value === 'youtube'
 }
 
 async function resolveClient(
@@ -184,7 +189,7 @@ export default async function handler(req: any, res: any) {
 async function handleStart(req: any, res: any) {
   const service = req.query?.service
   if (!isGoogleService(service)) {
-    res.status(400).send('Falta o es inválido el parámetro service (ga4 | gsc).')
+    res.status(400).send('Falta o es inválido el parámetro service (ga4 | gsc | youtube).')
     return
   }
 
@@ -301,7 +306,7 @@ async function handleCallback(req: any, res: any) {
 async function handleAccounts(req: any, res: any) {
   const service = req.query?.service
   if (!isGoogleService(service)) {
-    res.status(400).json({ error: 'Falta o es inválido el parámetro service (ga4 | gsc).' })
+    res.status(400).json({ error: 'Falta o es inválido el parámetro service (ga4 | gsc | youtube).' })
     return
   }
 
@@ -348,18 +353,33 @@ async function handleAccounts(req: any, res: any) {
       return
     }
 
-    // service === 'gsc'
-    const resp = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
-      headers: { Authorization: `Bearer ${session.accessToken}` },
-    })
+    if (service === 'gsc') {
+      const resp = await fetch('https://www.googleapis.com/webmasters/v3/sites', {
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+      })
+      const body = (await resp.json()) as {
+        siteEntry?: Array<{ siteUrl: string; permissionLevel: string }>
+        error?: { message: string }
+      }
+      if (!resp.ok) throw new Error(body.error?.message || `Google respondió ${resp.status}.`)
+      const accounts = (body.siteEntry ?? [])
+        .filter((s) => s.permissionLevel !== 'siteUnverifiedUser')
+        .map((s) => ({ id: s.siteUrl, name: s.siteUrl }))
+      res.status(200).json({ accounts })
+      return
+    }
+
+    // service === 'youtube'
+    const resp = await fetch(
+      `https://www.googleapis.com/youtube/v3/channels?${new URLSearchParams({ part: 'snippet', mine: 'true', maxResults: '50' }).toString()}`,
+      { headers: { Authorization: `Bearer ${session.accessToken}` } },
+    )
     const body = (await resp.json()) as {
-      siteEntry?: Array<{ siteUrl: string; permissionLevel: string }>
+      items?: Array<{ id: string; snippet: { title: string } }>
       error?: { message: string }
     }
     if (!resp.ok) throw new Error(body.error?.message || `Google respondió ${resp.status}.`)
-    const accounts = (body.siteEntry ?? [])
-      .filter((s) => s.permissionLevel !== 'siteUnverifiedUser')
-      .map((s) => ({ id: s.siteUrl, name: s.siteUrl }))
+    const accounts = (body.items ?? []).map((c) => ({ id: c.id, name: c.snippet.title }))
     res.status(200).json({ accounts })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudieron listar las cuentas de Google.' })
