@@ -117,17 +117,27 @@ const PAID_KPI_LABELS = [
   'ROAS',
 ] as const
 
+const ECOMMERCE_KPI_LABELS = ['Inversión', 'Ingresos', 'Ventas', 'Coste/Venta', 'ROAS', 'CTR'] as const
+const LEADGEN_KPI_LABELS = ['Inversión', 'Leads', 'Coste/Lead', 'Tasa de conversión', 'CTR', 'CPC'] as const
+
+/** Tipo de negocio del cliente (Configuración → Datos del cliente), cambia
+ * qué KPIs de Paid Media son relevantes: null = sin definir (set genérico). */
+export type BusinessType = 'leadgen' | 'ecommerce' | null
+
 import { formatNumber, formatCurrency, formatPercent, formatRoas } from '@/lib/utils'
 
 /**
  * Recalcula los KPIs de Paid Media a partir de las campañas reales, según la
- * pestaña de plataforma activa. Sin comparación con periodo anterior
- * todavía, así que no incluye variación (delta).
+ * pestaña de plataforma activa y el tipo de negocio del cliente (leadgen:
+ * leads y coste por lead; ecommerce: ventas e ingresos; sin definir: el set
+ * genérico de siempre). Sin comparación con periodo anterior todavía, así
+ * que no incluye variación (delta).
  */
 export function computePaidKpis(
   tab: PaidTab,
   visiblePlatforms: string[] = [...PAID_PLATFORMS],
   data: Campaign[] = [],
+  businessType: BusinessType = null,
 ): KpiData[] {
   const rows =
     tab === 'Todas'
@@ -145,6 +155,31 @@ export function computePaidKpis(
   const cpm = impresiones ? (inversion / impresiones) * 1000 : 0
   const costeConv = conversiones ? inversion / conversiones : 0
   const roas = inversion ? revenue / inversion : 0
+  const tasaConversion = clics ? (conversiones / clics) * 100 : 0
+
+  if (businessType === 'ecommerce') {
+    const computed: Record<(typeof ECOMMERCE_KPI_LABELS)[number], string> = {
+      Inversión: formatCurrency(inversion),
+      Ingresos: formatCurrency(revenue),
+      Ventas: formatNumber(conversiones),
+      'Coste/Venta': formatCurrency(costeConv, 2),
+      ROAS: formatRoas(roas),
+      CTR: formatPercent(ctr),
+    }
+    return ECOMMERCE_KPI_LABELS.map((label) => ({ label, value: computed[label] }))
+  }
+
+  if (businessType === 'leadgen') {
+    const computed: Record<(typeof LEADGEN_KPI_LABELS)[number], string> = {
+      Inversión: formatCurrency(inversion),
+      Leads: formatNumber(conversiones),
+      'Coste/Lead': formatCurrency(costeConv, 2),
+      'Tasa de conversión': formatPercent(tasaConversion),
+      CTR: formatPercent(ctr),
+      CPC: formatCurrency(cpc, 2),
+    }
+    return LEADGEN_KPI_LABELS.map((label) => ({ label, value: computed[label] }))
+  }
 
   const computed: Record<(typeof PAID_KPI_LABELS)[number], string> = {
     Inversión: formatCurrency(inversion),

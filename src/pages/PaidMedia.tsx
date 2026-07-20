@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useOutletContext, useParams } from 'react-router-dom'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -31,6 +31,7 @@ import {
 } from '@/lib/utils'
 import {
   type PaidTab,
+  type BusinessType,
   PAID_PLATFORMS,
   PAID_TAB_TO_CONNECTION,
   computePaidKpis,
@@ -40,18 +41,35 @@ import { useReportConfig } from '@/lib/reportConfig'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
 import { useDateRange } from '@/lib/dateRange'
+import { type useClientInfo } from '@/lib/useClientInfo'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 import NotContracted from '@/components/shared/NotContracted'
 
 type TopMetric = 'inversion' | 'impresiones' | 'clics' | 'conversiones' | 'roas'
 
-const TOP_METRIC_OPTIONS: { key: TopMetric; label: string }[] = [
-  { key: 'inversion', label: 'Inversión' },
-  { key: 'impresiones', label: 'Impresiones' },
-  { key: 'clics', label: 'Clics' },
-  { key: 'conversiones', label: 'Conversiones' },
-  { key: 'roas', label: 'ROAS' },
-]
+/** Etiqueta de "conversiones" según el tipo de negocio del cliente: leads
+ * para leadgen, ventas para ecommerce, genérica si no está definido. */
+function conversionLabel(businessType: BusinessType): string {
+  if (businessType === 'leadgen') return 'Leads'
+  if (businessType === 'ecommerce') return 'Ventas'
+  return 'Conversiones'
+}
+
+/** KPI a resaltar en las cards, según el tipo de negocio. */
+function highlightLabel(businessType: BusinessType): string {
+  if (businessType === 'leadgen') return 'Leads'
+  return 'ROAS'
+}
+
+function topMetricOptions(businessType: BusinessType): { key: TopMetric; label: string }[] {
+  return [
+    { key: 'inversion', label: 'Inversión' },
+    { key: 'impresiones', label: 'Impresiones' },
+    { key: 'clics', label: 'Clics' },
+    { key: 'conversiones', label: conversionLabel(businessType) },
+    { key: 'roas', label: 'ROAS' },
+  ]
+}
 
 /** Paleta para el donut de "Distribución por campaña" (pestañas de plataforma). */
 const CAMPAIGN_PALETTE = ['#F2FE54', '#60A5FA', '#A78BFA', '#34D399', '#FB923C', '#F472B6', '#9CA3AF']
@@ -67,75 +85,79 @@ function formatTopValue(metric: TopMetric, value: number): string {
   }
 }
 
-const campaignColumns: Column<Campaign>[] = [
-  {
-    key: 'platform',
-    header: 'Plataforma',
-    sortable: true,
-    render: (r) => <PlatformBadge platform={r.platform} />,
-  },
-  { key: 'name', header: 'Campaña', sortable: true },
-  {
-    key: 'status',
-    header: 'Estado',
-    sortable: true,
-    render: (r) => <StatusBadge status={r.status} />,
-  },
-  {
-    key: 'inversion',
-    header: 'Inversión',
-    align: 'right',
-    sortable: true,
-    render: (r) => formatCurrency(r.inversion),
-  },
-  {
-    key: 'impresiones',
-    header: 'Impr.',
-    align: 'right',
-    sortable: true,
-    render: (r) => formatNumber(r.impresiones),
-  },
-  {
-    key: 'clics',
-    header: 'Clics',
-    align: 'right',
-    sortable: true,
-    render: (r) => formatNumber(r.clics),
-  },
-  {
-    key: 'ctr',
-    header: 'CTR',
-    align: 'right',
-    sortable: true,
-    render: (r) => formatPercent(r.ctr),
-  },
-  {
-    key: 'cpc',
-    header: 'CPC',
-    align: 'right',
-    sortable: true,
-    render: (r) => formatCurrency(r.cpc, 2),
-  },
-  {
-    key: 'conversiones',
-    header: 'Conv.',
-    align: 'right',
-    sortable: true,
-    render: (r) => formatNumber(r.conversiones),
-  },
-  {
-    key: 'roas',
-    header: 'ROAS',
-    align: 'right',
-    sortable: true,
-    render: (r) => formatRoas(r.roas, 1),
-  },
-]
+function getCampaignColumns(businessType: BusinessType): Column<Campaign>[] {
+  return [
+    {
+      key: 'platform',
+      header: 'Plataforma',
+      sortable: true,
+      render: (r) => <PlatformBadge platform={r.platform} />,
+    },
+    { key: 'name', header: 'Campaña', sortable: true },
+    {
+      key: 'status',
+      header: 'Estado',
+      sortable: true,
+      render: (r) => <StatusBadge status={r.status} />,
+    },
+    {
+      key: 'inversion',
+      header: 'Inversión',
+      align: 'right',
+      sortable: true,
+      render: (r) => formatCurrency(r.inversion),
+    },
+    {
+      key: 'impresiones',
+      header: 'Impr.',
+      align: 'right',
+      sortable: true,
+      render: (r) => formatNumber(r.impresiones),
+    },
+    {
+      key: 'clics',
+      header: 'Clics',
+      align: 'right',
+      sortable: true,
+      render: (r) => formatNumber(r.clics),
+    },
+    {
+      key: 'ctr',
+      header: 'CTR',
+      align: 'right',
+      sortable: true,
+      render: (r) => formatPercent(r.ctr),
+    },
+    {
+      key: 'cpc',
+      header: 'CPC',
+      align: 'right',
+      sortable: true,
+      render: (r) => formatCurrency(r.cpc, 2),
+    },
+    {
+      key: 'conversiones',
+      header: conversionLabel(businessType) === 'Conversiones' ? 'Conv.' : conversionLabel(businessType),
+      align: 'right',
+      sortable: true,
+      render: (r) => formatNumber(r.conversiones),
+    },
+    {
+      key: 'roas',
+      header: 'ROAS',
+      align: 'right',
+      sortable: true,
+      render: (r) => formatRoas(r.roas, 1),
+    },
+  ]
+}
 
 export default function PaidMedia() {
   const { clientSlug = '' } = useParams()
   const { isVisible } = useReportConfig()
   const { range, label: rangeLabel } = useDateRange()
+  const clientInfo = useOutletContext<ReturnType<typeof useClientInfo>>()
+  const businessType = clientInfo.data?.businessType ?? null
   const [tab, setTab] = useState<PaidTab>('Todas')
   const [topMetric, setTopMetric] = useState<TopMetric>('roas')
   const { data, loading, error } = useAsyncData(
@@ -157,7 +179,9 @@ export default function PaidMedia() {
   if (error || !data)
     return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
 
-  const kpis = computePaidKpis(activeTab, visiblePlatforms, data.campaigns)
+  const kpis = computePaidKpis(activeTab, visiblePlatforms, data.campaigns, businessType)
+  const campaignColumns = getCampaignColumns(businessType)
+  const topMetricOpts = topMetricOptions(businessType)
   const rows =
     activeTab === 'Todas'
       ? data.campaigns.filter((c) => visiblePlatforms.includes(c.platform))
@@ -191,7 +215,7 @@ export default function PaidMedia() {
   const invConvData =
     activeTab === 'Todas' ? data.invConv : data.invConvByPlatform[activeTab] ?? []
 
-  const topMetricLabel = TOP_METRIC_OPTIONS.find((o) => o.key === topMetric)?.label ?? 'ROAS'
+  const topMetricLabel = topMetricOpts.find((o) => o.key === topMetric)?.label ?? 'ROAS'
   const topN = [...rows]
     .sort((a, b) => b[topMetric] - a[topMetric])
     .slice(0, 5)
@@ -205,12 +229,12 @@ export default function PaidMedia() {
       {/* KPI cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
         {kpis.map((kpi) => (
-          <KpiCard key={kpi.label} {...kpi} highlight={kpi.label === 'ROAS'} />
+          <KpiCard key={kpi.label} {...kpi} highlight={kpi.label === highlightLabel(businessType)} />
         ))}
       </div>
 
-      {/* Gráfico 1: Inversión vs Conversiones */}
-      <ChartCard title={`Inversión vs Conversiones — ${rangeLabel}`}>
+      {/* Gráfico 1: Inversión vs Conversiones/Leads/Ventas */}
+      <ChartCard title={`Inversión vs ${conversionLabel(businessType)} — ${rangeLabel}`}>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
@@ -273,7 +297,7 @@ export default function PaidMedia() {
                 yAxisId="right"
                 type="monotone"
                 dataKey="conversiones"
-                name="Conversiones"
+                name={conversionLabel(businessType)}
                 stroke="#FFFFFF"
                 strokeWidth={2}
                 dot={{ r: 2, fill: '#FFFFFF' }}
@@ -343,7 +367,7 @@ export default function PaidMedia() {
               onChange={(e) => setTopMetric(e.target.value as TopMetric)}
               className="rounded-control border border-border bg-base px-2 py-1 text-xs font-medium text-text-primary focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
             >
-              {TOP_METRIC_OPTIONS.map((o) => (
+              {topMetricOpts.map((o) => (
                 <option key={o.key} value={o.key}>
                   {o.label}
                 </option>

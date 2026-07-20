@@ -10,6 +10,9 @@ export interface ClientInfo {
   website: string | null
   logoUrl: string | null
   hasPassword: boolean
+  /** 'leadgen' | 'ecommerce' | null (sin definir todavía) — cambia qué KPIs
+   * destaca Paid Media. */
+  businessType: 'leadgen' | 'ecommerce' | null
 }
 
 interface ClientInfoState {
@@ -44,6 +47,7 @@ export function useClientInfo(clientSlug: string) {
           website: row.website,
           logoUrl: row.logo_url,
           hasPassword: !!row.hasPassword,
+          businessType: row.business_type === 'leadgen' || row.business_type === 'ecommerce' ? row.business_type : null,
         },
         loading: false,
         error: null,
