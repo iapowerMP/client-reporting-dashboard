@@ -7,7 +7,7 @@
  * POST { name, sector?, website? } -> crea un cliente nuevo, generando un
  *         slug único a partir del nombre, y lo devuelve. Ese slug es el que
  *         identifica al cliente en la URL (/c/<slug>/...).
- * PATCH { client, name?, sector?, website?, logoUrl?, password?, removePassword? }
+ * PATCH { client, name?, sector?, website?, logoUrl?, businessType?, password?, removePassword? }
  *         -> actualiza los datos del cliente (identificado por su slug actual).
  *         Si cambia el nombre, el slug (y por tanto la URL /c/<slug>/...) se
  *         regenera a partir del nuevo nombre. Si el cliente ya tiene
@@ -72,7 +72,7 @@ async function handleRequest(req: any, res: any) {
 
     if (slug) {
       try {
-        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash`
+        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type`
         const resp = await fetch(url, { headers })
         if (!resp.ok) {
           res.status(502).json({ error: `Supabase respondió ${resp.status} al leer clients.` })
@@ -145,7 +145,7 @@ async function handleRequest(req: any, res: any) {
   }
 
   if (req.method === 'PATCH') {
-    const { client: slug, name, sector, website, logoUrl, password, removePassword } = req.body ?? {}
+    const { client: slug, name, sector, website, logoUrl, businessType, password, removePassword } = req.body ?? {}
     if (!slug || typeof slug !== 'string') {
       res.status(400).json({ error: 'Falta el campo client (slug del cliente).' })
       return
@@ -156,6 +156,11 @@ async function handleRequest(req: any, res: any) {
     if (typeof sector === 'string') updates.sector = sector.trim() || null
     if (typeof website === 'string') updates.website = website.trim() || null
     if (typeof logoUrl === 'string') updates.logo_url = logoUrl.trim() || null
+    if (businessType === 'leadgen' || businessType === 'ecommerce') {
+      updates.business_type = businessType
+    } else if (businessType === '' || businessType === null) {
+      updates.business_type = null
+    }
     if (typeof password === 'string' && password.trim()) {
       updates.access_password_hash = hashPassword(password.trim())
     } else if (removePassword === true) {

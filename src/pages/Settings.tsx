@@ -621,6 +621,7 @@ export default function Settings() {
   const clientNameRef = useRef<HTMLInputElement>(null)
   const clientSectorRef = useRef<HTMLInputElement>(null)
   const clientWebsiteRef = useRef<HTMLInputElement>(null)
+  const clientBusinessTypeRef = useRef<HTMLSelectElement>(null)
   const [savingClient, setSavingClient] = useState(false)
 
   const handleSaveClient = async () => {
@@ -634,6 +635,7 @@ export default function Settings() {
           name: clientNameRef.current?.value ?? '',
           sector: clientSectorRef.current?.value ?? '',
           website: clientWebsiteRef.current?.value ?? '',
+          businessType: clientBusinessTypeRef.current?.value ?? '',
         }),
       })
       if (!resp.ok) throw new Error()
@@ -732,12 +734,30 @@ export default function Settings() {
       {/* Datos del cliente */}
       <ChartCard title="Datos del cliente">
         <div
-          key={`${clientData?.name ?? ''}-${clientData?.sector ?? ''}-${clientData?.website ?? ''}`}
+          key={`${clientData?.name ?? ''}-${clientData?.sector ?? ''}-${clientData?.website ?? ''}-${clientData?.businessType ?? ''}`}
           className="grid grid-cols-1 gap-4 sm:grid-cols-2"
         >
           <Field label="Nombre del cliente" defaultValue={clientData?.name} inputRef={clientNameRef} />
           <Field label="Sector" defaultValue={clientData?.sector ?? ''} inputRef={clientSectorRef} />
           <Field label="Sitio web" defaultValue={clientData?.website ?? ''} inputRef={clientWebsiteRef} />
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+              Tipo de negocio
+            </span>
+            <select
+              ref={clientBusinessTypeRef}
+              defaultValue={clientData?.businessType ?? ''}
+              className="w-full rounded-control border border-border bg-base px-3 py-2 text-sm text-white focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
+            >
+              <option value="">Sin definir</option>
+              <option value="leadgen">Leadgen (generación de leads)</option>
+              <option value="ecommerce">Ecommerce (venta online)</option>
+            </select>
+            <p className="mt-1.5 text-xs text-text-secondary">
+              Cambia qué KPIs destaca Paid Media: leads y coste por lead, o
+              ventas y ROAS.
+            </p>
+          </label>
           <div>
             <span className="mb-1.5 block text-xs font-medium text-text-secondary">
               Logo

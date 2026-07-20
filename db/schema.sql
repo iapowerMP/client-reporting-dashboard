@@ -21,8 +21,14 @@ create table if not exists clients (
   website              text,
   logo_url             text,
   access_password_hash text,  -- "salt:hash" (scrypt); null = informe sin contraseña
+  -- 'leadgen' | 'ecommerce' | null (sin definir todavía). Cambia qué KPIs
+  -- destaca Paid Media (ventas/ROAS vs leads/coste por lead).
+  business_type        text,
   created_at           timestamptz not null default now()
 );
+
+-- Por si la tabla ya existía de antes de añadir business_type:
+alter table clients add column if not exists business_type text;
 
 -- Bucket público para los logos de cliente (sube /api/upload-logo con la
 -- service role key; la lectura pública no necesita políticas RLS).
