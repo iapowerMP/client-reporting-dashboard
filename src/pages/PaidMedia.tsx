@@ -6,12 +6,10 @@ import {
   ComposedChart,
   Bar,
   Line,
+  LineChart,
   BarChart,
-  ScatterChart,
-  Scatter,
   XAxis,
   YAxis,
-  ZAxis,
   CartesianGrid,
   Tooltip,
   ReferenceLine,
@@ -42,7 +40,7 @@ import {
   computePaidKpis,
   computePaidDeltas,
   computeFunnel,
-  computeScatterPoints,
+  computeCampaignEfficiencySeries,
   computePlatformShareData,
 } from '@/data/catalog'
 import { useReportConfig } from '@/lib/reportConfig'
@@ -56,12 +54,25 @@ import NotContracted from '@/components/shared/NotContracted'
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
-/** Colores por plataforma, reutilizados en barras apiladas y scatter. */
+/** Colores por plataforma, reutilizados en barras apiladas. */
 const PLATFORM_COLORS: Record<string, string> = {
   'Google Ads': '#34A853',
   'Meta Ads': '#1877F2',
   'TikTok Ads': '#EE1D52',
 }
+
+/** Paleta para las líneas del gráfico "Eficiencia por campaña" — se cicla
+ * por índice, una por campaña. */
+const CAMPAIGN_LINE_COLORS = [
+  '#F2FE54',
+  '#60A5FA',
+  '#F87171',
+  '#34D399',
+  '#A78BFA',
+  '#FB923C',
+  '#22D3EE',
+  '#F472B6',
+]
 
 /** Etiqueta de "conversiones" según el tipo de negocio del cliente: leads
  * para leadgen, ventas para ecommerce, genérica si no está definido. */
@@ -509,9 +520,8 @@ function PaidMediaTabs({
   const platformShareData = computePlatformShareData(rows, visiblePlatforms, businessType)
   const funnel = computeFunnel(rows, businessType)
   const funnelWidths = computeFunnelWidths(funnel.steps)
-  const scatterPoints = computeScatterPoints(rows, businessType)
-  const scatterXLabel = conversionLabel(businessType)
-  const scatterYLabel = efficiencyLabel(businessType)
+  const campaignDailyForTab = data.campaignDaily.filter((r) => r.platform === activeTab)
+  const campaignEfficiency = computeCampaignEfficiencySeries(campaignDailyForTab, businessType)
 
   const creativeColumns = getCreativeColumns(businessType, data.metaAdAccountId, setPreviewCreative)
   const sortedCreatives = [...data.metaCreatives].sort((a, b) =>
@@ -743,50 +753,59 @@ function PaidMediaTabs({
           </ChartCard>
         </>
       ) : (
-        /* Scatter de eficiencia vs. volumen por campaña (solo pestañas de plataforma) */
-        <ChartCard title={`Eficiencia por campaña — ${activeTab}`}>
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 8, right: 24, left: 8, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" />
-                <XAxis
-                  type="number"
-                  dataKey="x"
-                  name={scatterXLabel}
-                  stroke="#9CA3AF"
-                  fontSize={11}
-                  tickFormatter={(v) => formatResult(businessType, v as number)}
-                />
-                <YAxis
-                  type="number"
-                  dataKey="y"
-                  name={scatterYLabel}
-                  stroke="#9CA3AF"
-                  fontSize={11}
-                  tickFormatter={(v) => formatEfficiency(businessType, v as number)}
-                />
-                <ZAxis type="number" dataKey="z" range={[60, 400]} name="Inversión" />
-                <Tooltip
-                  cursor={{ strokeDasharray: '3 3' }}
-                  content={({ active, payload }) => (
-                    <ChartTooltip
-                      active={active}
-                      payload={payload as Array<{ name?: string; value?: number; color?: string }>}
-                      label={(payload?.[0]?.payload as { name?: string } | undefined)?.name}
-                      formatter={(v, name) =>
-                        name === scatterXLabel
-                          ? formatResult(businessType, v)
-                          : name === scatterYLabel
-                            ? formatEfficiency(businessType, v)
-                            : formatCurrency(v)
-                      }
+        /* Eficiencia por campaña a lo largo del tiempo: una línea por campaña (solo pestañas de plataforma) */
+        <ChartCard title={`${efficiencyLabel(businessType)} por campaña — ${activeTab}`}>
+          {campaignEfficiency.data.length === 0 ? (
+            <p className="py-8 text-center text-sm text-text-secondary">Aún no hay datos suficientes.</p>
+          ) : (
+            <>
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={campaignEfficiency.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      stroke="#9CA3AF"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={{ stroke: '#2A2D36' }}
+                      interval={4}
                     />
-                  )}
-                />
-                <Scatter data={scatterPoints} fill="#F2FE54" />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
+                    <YAxis
+                      stroke="#9CA3AF"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => formatEfficiency(businessType, v as number)}
+                      width={52}
+                    />
+                    <Tooltip
+                      content={<ChartTooltip formatter={(v) => formatEfficiency(businessType, v)} />}
+                      cursor={{ stroke: '#2A2D36' }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 12 }} iconType="plainline" />
+                    {campaignEfficiency.campaigns.map((name, i) => (
+                      <Line
+                        key={name}
+                        type="monotone"
+                        dataKey={name}
+                        name={name}
+                        stroke={CAMPAIGN_LINE_COLORS[i % CAMPAIGN_LINE_COLORS.length]}
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              {campaignEfficiency.omitted > 0 && (
+                <p className="mt-2 text-xs text-text-secondary">
+                  Mostrando las {campaignEfficiency.campaigns.length} campañas con más inversión — {campaignEfficiency.omitted} más no se muestran para no saturar el gráfico.
+                </p>
+              )}
+            </>
+          )}
         </ChartCard>
       )}
 

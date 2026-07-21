@@ -191,6 +191,12 @@ async function handleRequest(req: any, res: any) {
       PlatformName,
       Map<string, { inversion: number; conversiones: number; ingresos: number }>
     >(PAID_SOURCES.map((s) => [s.platform, new Map()]))
+    // Serie diaria por campaña (para el gráfico "Eficiencia por campaña" —
+    // una línea por campaña en vez de un único punto agregado del rango).
+    const byCampaignDate = new Map<
+      string,
+      { platform: PlatformName; name: string; date: string; inversion: number; conversiones: number; ingresos: number }
+    >()
 
     PAID_SOURCES.forEach((source, i) => {
       for (const r of rowsByPlatform[i]) {
@@ -225,6 +231,21 @@ async function handleRequest(req: any, res: any) {
         platformDay.conversiones += Number(r.conversions)
         platformDay.ingresos += Number(r.conversions_value)
         platformDates.set(r.date, platformDay)
+
+        const cdKey = `${key}::${r.date}`
+        const cd = byCampaignDate.get(cdKey) ?? {
+          platform: source.platform,
+          name: r.campaign_name,
+          date: r.date,
+          inversion: 0,
+          conversiones: 0,
+          ingresos: 0,
+        }
+        cd.name = r.campaign_name
+        cd.inversion += Number(r.cost)
+        cd.conversiones += Number(r.conversions)
+        cd.ingresos += Number(r.conversions_value)
+        byCampaignDate.set(cdKey, cd)
       }
     })
 
@@ -261,6 +282,17 @@ async function handleRequest(req: any, res: any) {
           ingresos: round2(v.ingresos),
         }))
     }
+
+    const campaignDaily = Array.from(byCampaignDate.values())
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+      .map((v) => ({
+        date: formatDateLabel(v.date),
+        platform: v.platform,
+        name: v.name,
+        inversion: round2(v.inversion),
+        conversiones: round2(v.conversiones),
+        ingresos: round2(v.ingresos),
+      }))
 
     // --- Creatividades Meta (nivel anuncio), solo si hay meta-ads conectado ---
     const metaAccountId = accountByPlatform.get('meta-ads') ?? ''
@@ -332,6 +364,7 @@ async function handleRequest(req: any, res: any) {
       campaigns,
       invConv,
       invConvByPlatform,
+      campaignDaily,
       metaCreatives,
       metaAdAccountId: metaAccountId ? metaAccountId.replace(/^act_/, '') : null,
     })
