@@ -38,6 +38,20 @@ function formatEs(iso: string): string {
   return `${d}/${m}/${y}`
 }
 
+/** Devuelve el periodo de la misma duración inmediatamente anterior a
+ * `range` (p. ej. si range son los últimos 30 días, el resultado son los 30
+ * días previos a esos) — para calcular la variación % de los KPIs. */
+export function getPreviousRange(range: DateRange): DateRange {
+  const start = new Date(range.from)
+  const end = new Date(range.to)
+  const spanDays = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1
+  const prevEnd = new Date(start)
+  prevEnd.setDate(prevEnd.getDate() - 1)
+  const prevStart = new Date(prevEnd)
+  prevStart.setDate(prevStart.getDate() - (spanDays - 1))
+  return { from: toIsoDate(prevStart), to: toIsoDate(prevEnd) }
+}
+
 /** Valida un rango personalizado: fin >= inicio (mínimo 1 día), fin no futuro,
  * y un máximo de ~3 meses de amplitud. Devuelve un mensaje de error o null. */
 export function validateCustomRange(from: string, to: string): string | null {

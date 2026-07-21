@@ -17,10 +17,13 @@ export interface KpiData {
   label: string
   value: string
   /** Texto de variación ya formateado, ej: "▲ 8,2%" (opcional; solo se
-   * muestra cuando exista una comparación real con el periodo anterior). */
+   * muestra cuando exista una comparación real con el periodo anterior — si
+   * el periodo anterior fue 0, no hay base para calcular un % honesto y se
+   * omite en vez de mostrar un infinito o un 0% engañoso). */
   delta?: string
-  /** true → verde (bueno), false → rojo (malo). Independiente de la flecha. */
-  deltaPositive?: boolean
+  /** true → verde (bueno), false → rojo (malo), null → gris (neutro, p. ej.
+   * Inversión: ni subir ni bajar es en sí "bueno"). */
+  deltaPositive?: boolean | null
 }
 
 export type Platform =
@@ -126,12 +129,58 @@ export type BusinessType = 'leadgen' | 'ecommerce' | null
 
 import { formatNumber, formatCurrency, formatPercent, formatRoas } from '@/lib/utils'
 
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+interface PaidRawTotals {
+  inversion: number
+  impresiones: number
+  clics: number
+  conversiones: number
+  revenue: number
+  ctr: number
+  cpc: number
+  cpm: number
+  costeConv: number
+  roas: number
+  tasaConversion: number
+}
+
+/** Agrega un conjunto de campañas a sus totales/ratios en bruto (sin
+ * formatear) — lo comparten computePaidKpis (formatea) y computePaidDeltas
+ * (compara dos periodos). */
+function aggregatePaidRaw(rows: Campaign[]): PaidRawTotals {
+  const inversion = rows.reduce((s, c) => s + c.inversion, 0)
+  const impresiones = rows.reduce((s, c) => s + c.impresiones, 0)
+  const clics = rows.reduce((s, c) => s + c.clics, 0)
+  const conversiones = rows.reduce((s, c) => s + c.conversiones, 0)
+  const revenue = rows.reduce((s, c) => s + c.roas * c.inversion, 0)
+
+  return {
+    inversion,
+    impresiones,
+    clics,
+    conversiones,
+    revenue,
+    ctr: impresiones ? (clics / impresiones) * 100 : 0,
+    cpc: clics ? inversion / clics : 0,
+    cpm: impresiones ? (inversion / impresiones) * 1000 : 0,
+    costeConv: conversiones ? inversion / conversiones : 0,
+    roas: inversion ? revenue / inversion : 0,
+    tasaConversion: clics ? (conversiones / clics) * 100 : 0,
+  }
+}
+
+function filterPaidRows(tab: PaidTab, visiblePlatforms: string[], data: Campaign[]): Campaign[] {
+  return tab === 'Todas'
+    ? data.filter((c) => visiblePlatforms.includes(c.platform))
+    : data.filter((c) => c.platform === tab)
+}
+
 /**
  * Recalcula los KPIs de Paid Media a partir de las campañas reales, según la
  * pestaña de plataforma activa y el tipo de negocio del cliente (leadgen:
  * leads y coste por lead; ecommerce: ventas e ingresos; sin definir: el set
- * genérico de siempre). Sin comparación con periodo anterior todavía, así
- * que no incluye variación (delta).
+ * genérico de siempre).
  */
 export function computePaidKpis(
   tab: PaidTab,
@@ -139,71 +188,211 @@ export function computePaidKpis(
   data: Campaign[] = [],
   businessType: BusinessType = null,
 ): KpiData[] {
-  const rows =
-    tab === 'Todas'
-      ? data.filter((c) => visiblePlatforms.includes(c.platform))
-      : data.filter((c) => c.platform === tab)
-
-  const inversion = rows.reduce((s, c) => s + c.inversion, 0)
-  const impresiones = rows.reduce((s, c) => s + c.impresiones, 0)
-  const clics = rows.reduce((s, c) => s + c.clics, 0)
-  const conversiones = rows.reduce((s, c) => s + c.conversiones, 0)
-  const revenue = rows.reduce((s, c) => s + c.roas * c.inversion, 0)
-
-  const ctr = impresiones ? (clics / impresiones) * 100 : 0
-  const cpc = clics ? inversion / clics : 0
-  const cpm = impresiones ? (inversion / impresiones) * 1000 : 0
-  const costeConv = conversiones ? inversion / conversiones : 0
-  const roas = inversion ? revenue / inversion : 0
-  const tasaConversion = clics ? (conversiones / clics) * 100 : 0
+  const t = aggregatePaidRaw(filterPaidRows(tab, visiblePlatforms, data))
 
   if (businessType === 'ecommerce') {
     const computed: Record<(typeof ECOMMERCE_KPI_LABELS)[number], string> = {
-      Inversión: formatCurrency(inversion),
-      Ingresos: formatCurrency(revenue),
-      Ventas: formatNumber(conversiones),
-      'Coste/Venta': formatCurrency(costeConv, 2),
-      ROAS: formatRoas(roas),
-      CTR: formatPercent(ctr),
+      Inversión: formatCurrency(t.inversion),
+      Ingresos: formatCurrency(t.revenue),
+      Ventas: formatNumber(t.conversiones),
+      'Coste/Venta': formatCurrency(t.costeConv, 2),
+      ROAS: formatRoas(t.roas),
+      CTR: formatPercent(t.ctr),
     }
     return ECOMMERCE_KPI_LABELS.map((label) => ({ label, value: computed[label] }))
   }
 
   if (businessType === 'leadgen') {
     const computed: Record<(typeof LEADGEN_KPI_LABELS)[number], string> = {
-      Inversión: formatCurrency(inversion),
-      Leads: formatNumber(conversiones),
-      'Coste/Lead': formatCurrency(costeConv, 2),
-      'Tasa de conversión': formatPercent(tasaConversion),
-      CTR: formatPercent(ctr),
-      CPC: formatCurrency(cpc, 2),
+      Inversión: formatCurrency(t.inversion),
+      Leads: formatNumber(t.conversiones),
+      'Coste/Lead': formatCurrency(t.costeConv, 2),
+      'Tasa de conversión': formatPercent(t.tasaConversion),
+      CTR: formatPercent(t.ctr),
+      CPC: formatCurrency(t.cpc, 2),
     }
     return LEADGEN_KPI_LABELS.map((label) => ({ label, value: computed[label] }))
   }
 
   const computed: Record<(typeof PAID_KPI_LABELS)[number], string> = {
-    Inversión: formatCurrency(inversion),
-    Impresiones: formatNumber(impresiones),
-    Clics: formatNumber(clics),
-    CTR: formatPercent(ctr),
-    CPC: formatCurrency(cpc, 2),
-    CPM: formatCurrency(cpm, 2),
-    Conversiones: formatNumber(conversiones),
-    'Coste/Conv': formatCurrency(costeConv, 2),
-    ROAS: formatRoas(roas),
+    Inversión: formatCurrency(t.inversion),
+    Impresiones: formatNumber(t.impresiones),
+    Clics: formatNumber(t.clics),
+    CTR: formatPercent(t.ctr),
+    CPC: formatCurrency(t.cpc, 2),
+    CPM: formatCurrency(t.cpm, 2),
+    Conversiones: formatNumber(t.conversiones),
+    'Coste/Conv': formatCurrency(t.costeConv, 2),
+    ROAS: formatRoas(t.roas),
   }
 
   return PAID_KPI_LABELS.map((label) => ({ label, value: computed[label] }))
 }
 
-/** Punto del gráfico Inversión vs Conversiones. */
+type MetricPolarity = 'higher' | 'lower' | 'neutral'
+
+/** Si subir el valor de esta métrica es bueno (higher), malo (lower) o
+ * indiferente (neutral) — decide el color (verde/rojo/gris) de su delta. */
+const METRIC_POLARITY: Record<string, MetricPolarity> = {
+  Inversión: 'neutral',
+  Impresiones: 'higher',
+  Clics: 'higher',
+  CTR: 'higher',
+  CPC: 'lower',
+  CPM: 'lower',
+  Conversiones: 'higher',
+  'Coste/Conv': 'lower',
+  ROAS: 'higher',
+  Ingresos: 'higher',
+  Ventas: 'higher',
+  'Coste/Venta': 'lower',
+  Leads: 'higher',
+  'Coste/Lead': 'lower',
+  'Tasa de conversión': 'higher',
+}
+
+/**
+ * Calcula la variación % de cada KPI de Paid Media frente al periodo
+ * anterior (misma duración, inmediatamente antes del rango activo). Si el
+ * periodo anterior fue 0 para una métrica, se omite (no hay base honesta
+ * para expresar un %).
+ */
+export function computePaidDeltas(
+  tab: PaidTab,
+  visiblePlatforms: string[],
+  currentData: Campaign[],
+  previousData: Campaign[],
+  businessType: BusinessType,
+): Record<string, { delta: string; deltaPositive: boolean | null }> {
+  const cur = aggregatePaidRaw(filterPaidRows(tab, visiblePlatforms, currentData))
+  const prev = aggregatePaidRaw(filterPaidRows(tab, visiblePlatforms, previousData))
+
+  const labels =
+    businessType === 'ecommerce' ? ECOMMERCE_KPI_LABELS : businessType === 'leadgen' ? LEADGEN_KPI_LABELS : PAID_KPI_LABELS
+
+  const rawByLabel: Record<string, [number, number]> = {
+    Inversión: [cur.inversion, prev.inversion],
+    Impresiones: [cur.impresiones, prev.impresiones],
+    Clics: [cur.clics, prev.clics],
+    CTR: [cur.ctr, prev.ctr],
+    CPC: [cur.cpc, prev.cpc],
+    CPM: [cur.cpm, prev.cpm],
+    Conversiones: [cur.conversiones, prev.conversiones],
+    'Coste/Conv': [cur.costeConv, prev.costeConv],
+    ROAS: [cur.roas, prev.roas],
+    Ingresos: [cur.revenue, prev.revenue],
+    Ventas: [cur.conversiones, prev.conversiones],
+    'Coste/Venta': [cur.costeConv, prev.costeConv],
+    Leads: [cur.conversiones, prev.conversiones],
+    'Coste/Lead': [cur.costeConv, prev.costeConv],
+    'Tasa de conversión': [cur.tasaConversion, prev.tasaConversion],
+  }
+
+  const result: Record<string, { delta: string; deltaPositive: boolean | null }> = {}
+  for (const label of labels) {
+    const pair = rawByLabel[label]
+    if (!pair) continue
+    const [c, p] = pair
+    if (!p) continue
+    const pct = ((c - p) / Math.abs(p)) * 100
+    const polarity = METRIC_POLARITY[label] ?? 'neutral'
+    const deltaPositive = polarity === 'neutral' ? null : polarity === 'higher' ? pct >= 0 : pct <= 0
+    const arrow = pct >= 0 ? '▲' : '▼'
+    result[label] = { delta: `${arrow} ${formatPercent(Math.abs(pct), 1)}`, deltaPositive }
+  }
+  return result
+}
+
+/** Paso del funnel Impresiones → Clics → Leads/Ventas. */
+export interface FunnelStep {
+  label: string
+  value: number
+  displayValue: string
+}
+
+/** Métrica de eficiencia mostrada entre dos pasos del funnel (CTR entre
+ * impresiones→clics, CPL/Coste-Venta entre clics→conversiones). */
+export interface FunnelTransition {
+  label: string
+  value: string
+}
+
+/** Funnel simplificado (sin datos de landing/CRM todavía): Impresiones →
+ * Clics → Leads/Ventas/Conversiones, con CTR y CPL/Coste-Venta como métricas
+ * de paso — construido íntegramente a partir de las campañas ya ingeridas. */
+export function computeFunnel(
+  rows: Campaign[],
+  businessType: BusinessType,
+): { steps: FunnelStep[]; transitions: FunnelTransition[] } {
+  const t = aggregatePaidRaw(rows)
+  const lastLabel = businessType === 'ecommerce' ? 'Ventas' : businessType === 'leadgen' ? 'Leads' : 'Conversiones'
+  const costLabel = businessType === 'ecommerce' ? 'Coste/Venta' : businessType === 'leadgen' ? 'Coste/Lead' : 'Coste/Conv'
+
+  return {
+    steps: [
+      { label: 'Impresiones', value: t.impresiones, displayValue: formatNumber(t.impresiones) },
+      { label: 'Clics', value: t.clics, displayValue: formatNumber(t.clics) },
+      { label: lastLabel, value: t.conversiones, displayValue: formatNumber(t.conversiones) },
+    ],
+    transitions: [
+      { label: 'CTR', value: formatPercent(t.ctr) },
+      { label: costLabel, value: formatCurrency(t.costeConv, 2) },
+    ],
+  }
+}
+
+/** Punto del scatter de eficiencia vs volumen por campaña (x = resultado,
+ * y = coste por resultado o ROAS, z = tamaño de burbuja = inversión). */
+export interface ScatterPoint {
+  name: string
+  x: number
+  y: number
+  z: number
+}
+
+export function computeScatterPoints(rows: Campaign[], businessType: BusinessType): ScatterPoint[] {
+  return rows.map((r) => ({
+    name: r.name,
+    x: businessType === 'ecommerce' ? round2(r.roas * r.inversion) : r.conversiones,
+    y: businessType === 'ecommerce' ? r.roas : r.conversiones ? round2(r.inversion / r.conversiones) : 0,
+    z: r.inversion,
+  }))
+}
+
+type PlatformShareRow = { metric: string } & Record<string, number | string>
+
+/** Datos para la barra horizontal 100% apilada "Comparativa plataformas":
+ * dos filas (Gasto y Leads/Ingresos), una columna por plataforma visible. */
+export function computePlatformShareData(
+  rows: Campaign[],
+  visiblePlatforms: string[],
+  businessType: BusinessType,
+): PlatformShareRow[] {
+  const resultLabel = businessType === 'ecommerce' ? 'Ingresos' : businessType === 'leadgen' ? 'Leads' : 'Conversiones'
+  const gastoRow: PlatformShareRow = { metric: 'Gasto' }
+  const resultRow: PlatformShareRow = { metric: resultLabel }
+  for (const p of visiblePlatforms) {
+    const platRows = rows.filter((r) => r.platform === p)
+    gastoRow[p] = round2(platRows.reduce((s, r) => s + r.inversion, 0))
+    resultRow[p] = round2(
+      businessType === 'ecommerce'
+        ? platRows.reduce((s, r) => s + r.roas * r.inversion, 0)
+        : platRows.reduce((s, r) => s + r.conversiones, 0),
+    )
+  }
+  return [gastoRow, resultRow]
+}
+
+/** Punto del gráfico Inversión/Leads/Ingresos vs CPL/ROAS. */
 export interface InvConvPoint {
   date: string
   inversion: number
   conversiones: number
+  ingresos: number
 }
 
-/** Segmento del donut de distribución (por plataforma o por campaña). */
+/** Segmento del donut de distribución (por plataforma o por campaña) —
+ * también lo usa Redes Sociales para "Alcance por plataforma". */
 export interface PlatformSlice {
   name: string
   value: number
@@ -211,10 +400,17 @@ export interface PlatformSlice {
   color: string
 }
 
-/** Barra del ranking Top 5 campañas por ROAS. */
-export interface RoasBar {
+/** Fila de la tabla de creatividades de Meta Ads (nivel anuncio). */
+export interface MetaCreative {
   name: string
+  format: string
+  impresiones: number
+  clics: number
+  ctr: number
+  conversiones: number
+  costeConv: number
   roas: number
+  frecuencia: number
 }
 
 /* ========================================================================== */

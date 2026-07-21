@@ -24,11 +24,24 @@ create table if not exists clients (
   -- 'leadgen' | 'ecommerce' | null (sin definir todavía). Cambia qué KPIs
   -- destaca Paid Media (ventas/ROAS vs leads/coste por lead).
   business_type        text,
+  -- Targets de Paid Media (Configuración → Datos del cliente), null = sin
+  -- definir. cpl_target/leads_target_monthly se usan si business_type es
+  -- 'leadgen'; roas_target/revenue_target_monthly si es 'ecommerce'.
+  -- Los objetivos mensuales se prorratean según los días del rango
+  -- seleccionado en el informe (7d/30d/90d/personalizado).
+  cpl_target             numeric(10,2),
+  leads_target_monthly   integer,
+  roas_target            numeric(6,2),
+  revenue_target_monthly numeric(14,2),
   created_at           timestamptz not null default now()
 );
 
--- Por si la tabla ya existía de antes de añadir business_type:
+-- Por si la tabla ya existía de antes de añadir estas columnas:
 alter table clients add column if not exists business_type text;
+alter table clients add column if not exists cpl_target numeric(10,2);
+alter table clients add column if not exists leads_target_monthly integer;
+alter table clients add column if not exists roas_target numeric(6,2);
+alter table clients add column if not exists revenue_target_monthly numeric(14,2);
 
 -- Bucket público para los logos de cliente (sube /api/upload-logo con la
 -- service role key; la lectura pública no necesita políticas RLS).
@@ -116,6 +129,37 @@ create table if not exists meta_campaign_daily (
 
 create index if not exists idx_meta_daily_client_date
   on meta_campaign_daily (client_id, date);
+
+-- ----------------------------------------------------------------------------
+--  Meta Ads — insights a nivel de ANUNCIO (no de campaña), granularidad
+--  día+anuncio. Alimenta la tabla de "Creatividades" de la pestaña Meta Ads.
+--  Simplificación actual (V1): `format` sale de una consulta aparte
+--  (GET /{ad-account}/ads?fields=id,creative{object_type}) porque la API de
+--  Insights no expone el tipo de creativo en la misma llamada — se une por
+--  ad_id en el workflow de n8n. `frequency` es la métrica de Meta tal cual
+--  (impresiones / alcance), agregada junto al resto por rango de fechas.
+-- ----------------------------------------------------------------------------
+create table if not exists meta_ad_daily (
+  id                 bigint generated always as identity primary key,
+  client_id          uuid not null references clients(id) on delete cascade,
+  ad_account_id      text,
+  date               date not null,
+  ad_id              text not null,
+  ad_name            text not null,
+  campaign_id        text,
+  format             text,                    -- 'imagen' | 'video' | 'carrusel' | 'coleccion' | 'dpa' | 'otro'
+  impressions        bigint not null default 0,
+  clicks             bigint not null default 0,
+  cost               numeric(14,2) not null default 0,
+  conversions        numeric(14,2) not null default 0,
+  conversions_value  numeric(14,2) not null default 0,
+  frequency          numeric(6,2) not null default 0,
+  updated_at         timestamptz not null default now(),
+  unique (client_id, date, ad_id)
+);
+
+create index if not exists idx_meta_ad_daily_client_date
+  on meta_ad_daily (client_id, date);
 
 -- ----------------------------------------------------------------------------
 --  Google Analytics 4 — métricas diarias por canal (granularidad día+canal).

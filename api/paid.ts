@@ -1,9 +1,17 @@
 /**
- * Vercel Function: GET /api/paid?client=<slug>
+ * Vercel Function: GET /api/paid?client=<slug>&from&to
  * Lee las métricas diarias de cada plataforma de paid media conectada
  * (Google Ads: tabla gads_campaign_daily; Meta Ads: tabla meta_campaign_daily)
  * y las agrega en la forma que espera PaidData (src/services/types.ts).
  * TikTok Ads se añadirá del mismo modo cuando tenga su propia tabla/integración.
+ *
+ * invConv/invConvByPlatform incluyen `ingresos` (conversions_value sumado)
+ * además de inversion/conversiones, para poder pintar una línea de ROAS
+ * diario en el combo chart de Paid Media (no solo CPL).
+ *
+ * metaCreatives agrega meta_ad_daily (insights a nivel de anuncio) por
+ * ad_id en el rango de fechas — vacío si el cliente no tiene Meta Ads
+ * conectado o esa tabla aún no tiene filas para él.
  *
  * El deployment es compartido por todos los clientes: el cliente se resuelve
  * en cada petición a partir del slug de la URL (?client=), no de una variable
@@ -60,20 +68,30 @@ interface CampaignRow {
   conversions_value: string | number
 }
 
+interface AdRow {
+  ad_id: string
+  ad_name: string
+  format: string | null
+  impressions: string | number
+  clicks: string | number
+  cost: string | number
+  conversions: string | number
+  conversions_value: string | number
+  frequency: string | number
+}
+
 type PlatformName = 'Google Ads' | 'Meta Ads'
 
-/** Una fuente de paid media = su tabla, la columna que identifica la cuenta
- * (para ignorar datos de una cuenta anterior si el cliente cambia de ID), y
- * el nombre/color con el que aparece en el informe. */
+/** Una fuente de paid media = su tabla y la columna que identifica la cuenta
+ * (para ignorar datos de una cuenta anterior si el cliente cambia de ID). */
 const PAID_SOURCES: Array<{
   platform: PlatformName
   dataSourcePlatform: string
   table: string
   accountColumn: string
-  color: string
 }> = [
-  { platform: 'Google Ads', dataSourcePlatform: 'google-ads', table: 'gads_campaign_daily', accountColumn: 'customer_id', color: '#34A853' },
-  { platform: 'Meta Ads', dataSourcePlatform: 'meta-ads', table: 'meta_campaign_daily', accountColumn: 'ad_account_id', color: '#1877F2' },
+  { platform: 'Google Ads', dataSourcePlatform: 'google-ads', table: 'gads_campaign_daily', accountColumn: 'customer_id' },
+  { platform: 'Meta Ads', dataSourcePlatform: 'meta-ads', table: 'meta_campaign_daily', accountColumn: 'ad_account_id' },
 ]
 
 const round2 = (n: number) => Math.round(n * 100) / 100
@@ -165,12 +183,13 @@ async function handleRequest(req: any, res: any) {
       string,
       { platform: PlatformName; name: string; status: string; cost: number; impressions: number; clicks: number; conversions: number; conversionsValue: number }
     >()
-    const byDate = new Map<string, { inversion: number; conversiones: number }>()
+    const byDate = new Map<string, { inversion: number; conversiones: number; ingresos: number }>()
     // Serie diaria por plataforma, para que las pestañas de Google/Meta no
     // mezclen inversión ni conversiones de otras plataformas.
-    const byDatePlatform = new Map<PlatformName, Map<string, { inversion: number; conversiones: number }>>(
-      PAID_SOURCES.map((s) => [s.platform, new Map()]),
-    )
+    const byDatePlatform = new Map<
+      PlatformName,
+      Map<string, { inversion: number; conversiones: number; ingresos: number }>
+    >(PAID_SOURCES.map((s) => [s.platform, new Map()]))
 
     PAID_SOURCES.forEach((source, i) => {
       for (const r of rowsByPlatform[i]) {
@@ -193,15 +212,17 @@ async function handleRequest(req: any, res: any) {
         campaign.conversionsValue += Number(r.conversions_value)
         byCampaign.set(key, campaign)
 
-        const day = byDate.get(r.date) ?? { inversion: 0, conversiones: 0 }
+        const day = byDate.get(r.date) ?? { inversion: 0, conversiones: 0, ingresos: 0 }
         day.inversion += Number(r.cost)
         day.conversiones += Number(r.conversions)
+        day.ingresos += Number(r.conversions_value)
         byDate.set(r.date, day)
 
         const platformDates = byDatePlatform.get(source.platform)!
-        const platformDay = platformDates.get(r.date) ?? { inversion: 0, conversiones: 0 }
+        const platformDay = platformDates.get(r.date) ?? { inversion: 0, conversiones: 0, ingresos: 0 }
         platformDay.inversion += Number(r.cost)
         platformDay.conversiones += Number(r.conversions)
+        platformDay.ingresos += Number(r.conversions_value)
         platformDates.set(r.date, platformDay)
       }
     })
@@ -225,9 +246,10 @@ async function handleRequest(req: any, res: any) {
         date: formatDateLabel(date),
         inversion: round2(v.inversion),
         conversiones: round2(v.conversiones),
+        ingresos: round2(v.ingresos),
       }))
 
-    const invConvByPlatform: Record<string, { date: string; inversion: number; conversiones: number }[]> = {}
+    const invConvByPlatform: Record<string, { date: string; inversion: number; conversiones: number; ingresos: number }[]> = {}
     for (const source of PAID_SOURCES) {
       invConvByPlatform[source.platform] = Array.from(byDatePlatform.get(source.platform)!.entries())
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -235,30 +257,70 @@ async function handleRequest(req: any, res: any) {
           date: formatDateLabel(date),
           inversion: round2(v.inversion),
           conversiones: round2(v.conversiones),
+          ingresos: round2(v.ingresos),
         }))
     }
 
-    const totalsByPlatform = new Map<PlatformName, number>()
-    for (const c of campaigns) totalsByPlatform.set(c.platform, (totalsByPlatform.get(c.platform) ?? 0) + c.inversion)
-    const totalInversion = round2([...totalsByPlatform.values()].reduce((s, v) => s + v, 0))
-    const distribution = totalInversion
-      ? PAID_SOURCES.filter((s) => totalsByPlatform.has(s.platform)).map((s) => {
-          const value = round2(totalsByPlatform.get(s.platform) ?? 0)
-          return {
-            name: s.platform,
-            value,
-            percent: `${((value / totalInversion) * 100).toFixed(1).replace('.', ',')}%`,
-            color: s.color,
+    // --- Creatividades Meta (nivel anuncio), solo si hay meta-ads conectado ---
+    const metaAccountId = accountByPlatform.get('meta-ads') ?? ''
+    let metaCreatives: Array<{
+      name: string
+      format: string
+      impresiones: number
+      clics: number
+      ctr: number
+      conversiones: number
+      costeConv: number
+      roas: number
+      frecuencia: number
+    }> = []
+    if (metaAccountId) {
+      const query = new URLSearchParams({ client_id: `eq.${client.id}`, ad_account_id: `eq.${metaAccountId}` })
+      if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
+      const adsResp = await fetch(`${SUPABASE_URL}/rest/v1/meta_ad_daily?${query.toString()}`, { headers })
+      if (adsResp.ok) {
+        const adRows = (await adsResp.json()) as AdRow[]
+        const byAd = new Map<
+          string,
+          { name: string; format: string; impressions: number; clicks: number; cost: number; conversions: number; conversionsValue: number; frequencySum: number; days: number }
+        >()
+        for (const r of adRows) {
+          const cur = byAd.get(r.ad_id) ?? {
+            name: r.ad_name,
+            format: r.format || 'otro',
+            impressions: 0,
+            clicks: 0,
+            cost: 0,
+            conversions: 0,
+            conversionsValue: 0,
+            frequencySum: 0,
+            days: 0,
           }
-        })
-      : []
+          cur.impressions += Number(r.impressions)
+          cur.clicks += Number(r.clicks)
+          cur.cost += Number(r.cost)
+          cur.conversions += Number(r.conversions)
+          cur.conversionsValue += Number(r.conversions_value)
+          cur.frequencySum += Number(r.frequency)
+          cur.days += 1
+          byAd.set(r.ad_id, cur)
+        }
+        metaCreatives = Array.from(byAd.values()).map((c) => ({
+          name: c.name,
+          format: c.format,
+          impresiones: c.impressions,
+          clics: c.clicks,
+          ctr: c.impressions ? round2((c.clicks / c.impressions) * 100) : 0,
+          conversiones: round2(c.conversions),
+          costeConv: c.conversions ? round2(c.cost / c.conversions) : 0,
+          roas: c.cost ? round2(c.conversionsValue / c.cost) : 0,
+          frecuencia: c.days ? round2(c.frequencySum / c.days) : 0,
+        }))
+      }
+    }
 
-    const topRoas = [...campaigns]
-      .sort((a, b) => b.roas - a.roas)
-      .slice(0, 5)
-      .map((c) => ({ name: c.name, roas: c.roas }))
-
-    res.status(200).json({ campaigns, invConv, invConvByPlatform, distribution, topRoas })
+    res.status(200).json({ campaigns, invConv, invConvByPlatform, metaCreatives })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudo leer paid media desde Supabase.' })
   }
