@@ -402,6 +402,7 @@ export interface MetaCreative {
   adId: string
   name: string
   format: string
+  thumbnailUrl: string | null
   impresiones: number
   clics: number
   ctr: number

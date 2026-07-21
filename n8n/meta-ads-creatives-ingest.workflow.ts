@@ -215,7 +215,9 @@ const fetchFormatApi = node({
       specifyQuery: 'keypair',
       queryParameters: {
         parameters: [
-          { name: 'fields', value: 'id,creative{object_type}' },
+          { name: 'fields', value: 'id,creative{object_type,thumbnail_url}' },
+          { name: 'thumbnail_width', value: '400' },
+          { name: 'thumbnail_height', value: '400' },
           { name: 'limit', value: '500' },
         ],
       },
@@ -268,7 +270,9 @@ const fetchFormatOauth = node({
       specifyQuery: 'keypair',
       queryParameters: {
         parameters: [
-          { name: 'fields', value: 'id,creative{object_type}' },
+          { name: 'fields', value: 'id,creative{object_type,thumbnail_url}' },
+          { name: 'thumbnail_width', value: '400' },
+          { name: 'thumbnail_height', value: '400' },
           { name: 'limit', value: '500' },
         ],
       },
@@ -304,7 +308,8 @@ const OBJECT_TYPE_TO_FORMAT = { VIDEO: 'video', PHOTO: 'imagen', SHARE: 'imagen'
 const formatByAdId = new Map();
 for (const a of formatRows) {
   const ot = (a.creative && a.creative.object_type) || '';
-  formatByAdId.set(String(a.id), OBJECT_TYPE_TO_FORMAT[ot] || 'otro');
+  const thumb = (a.creative && a.creative.thumbnail_url) || null;
+  formatByAdId.set(String(a.id), { format: OBJECT_TYPE_TO_FORMAT[ot] || 'otro', thumbnailUrl: thumb });
 }
 const byAdDate = new Map();
 for (const r of insights) {
@@ -334,13 +339,13 @@ if (byAdDate.size === 0) {
   return { json: { query: touchDataSource, rowCount: 0 } };
 }
 const values = Array.from(byAdDate.values()).map((x) => {
-  const format = formatByAdId.get(x.ad_id) || 'otro';
-  return '(' + esc(clientId) + '::uuid, ' + esc(adAccountId) + ', ' + esc(x.date) + '::date, ' + esc(x.ad_id) + ', ' + esc(x.ad_name) + ', ' + (x.campaign_id ? esc(x.campaign_id) : 'NULL') + ', ' + esc(format) + ', ' + x.impressions + ', ' + x.clicks + ', ' + x.cost + ', ' + x.conversions + ', ' + x.conversions_value + ', ' + x.frequency + ')';
+  const meta = formatByAdId.get(x.ad_id) || { format: 'otro', thumbnailUrl: null };
+  return '(' + esc(clientId) + '::uuid, ' + esc(adAccountId) + ', ' + esc(x.date) + '::date, ' + esc(x.ad_id) + ', ' + esc(x.ad_name) + ', ' + (x.campaign_id ? esc(x.campaign_id) : 'NULL') + ', ' + esc(meta.format) + ', ' + (meta.thumbnailUrl ? esc(meta.thumbnailUrl) : 'NULL') + ', ' + x.impressions + ', ' + x.clicks + ', ' + x.cost + ', ' + x.conversions + ', ' + x.conversions_value + ', ' + x.frequency + ')';
 }).join(',');
 const upsertQuery =
-  'INSERT INTO meta_ad_daily (client_id, ad_account_id, date, ad_id, ad_name, campaign_id, format, impressions, clicks, cost, conversions, conversions_value, frequency) VALUES ' +
+  'INSERT INTO meta_ad_daily (client_id, ad_account_id, date, ad_id, ad_name, campaign_id, format, thumbnail_url, impressions, clicks, cost, conversions, conversions_value, frequency) VALUES ' +
   values +
-  ' ON CONFLICT (client_id, date, ad_id) DO UPDATE SET ad_account_id = EXCLUDED.ad_account_id, ad_name = EXCLUDED.ad_name, campaign_id = EXCLUDED.campaign_id, format = EXCLUDED.format, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, cost = EXCLUDED.cost, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, frequency = EXCLUDED.frequency, updated_at = now();';
+  ' ON CONFLICT (client_id, date, ad_id) DO UPDATE SET ad_account_id = EXCLUDED.ad_account_id, ad_name = EXCLUDED.ad_name, campaign_id = EXCLUDED.campaign_id, format = EXCLUDED.format, thumbnail_url = EXCLUDED.thumbnail_url, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, cost = EXCLUDED.cost, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, frequency = EXCLUDED.frequency, updated_at = now();';
 return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: byAdDate.size } };`,
     },
     position: [1800, 420],
@@ -369,7 +374,8 @@ const OBJECT_TYPE_TO_FORMAT = { VIDEO: 'video', PHOTO: 'imagen', SHARE: 'imagen'
 const formatByAdId = new Map();
 for (const a of formatRows) {
   const ot = (a.creative && a.creative.object_type) || '';
-  formatByAdId.set(String(a.id), OBJECT_TYPE_TO_FORMAT[ot] || 'otro');
+  const thumb = (a.creative && a.creative.thumbnail_url) || null;
+  formatByAdId.set(String(a.id), { format: OBJECT_TYPE_TO_FORMAT[ot] || 'otro', thumbnailUrl: thumb });
 }
 const byAdDate = new Map();
 for (const r of insights) {
@@ -399,13 +405,13 @@ if (byAdDate.size === 0) {
   return { json: { query: touchDataSource, rowCount: 0 } };
 }
 const values = Array.from(byAdDate.values()).map((x) => {
-  const format = formatByAdId.get(x.ad_id) || 'otro';
-  return '(' + esc(clientId) + '::uuid, ' + esc(adAccountId) + ', ' + esc(x.date) + '::date, ' + esc(x.ad_id) + ', ' + esc(x.ad_name) + ', ' + (x.campaign_id ? esc(x.campaign_id) : 'NULL') + ', ' + esc(format) + ', ' + x.impressions + ', ' + x.clicks + ', ' + x.cost + ', ' + x.conversions + ', ' + x.conversions_value + ', ' + x.frequency + ')';
+  const meta = formatByAdId.get(x.ad_id) || { format: 'otro', thumbnailUrl: null };
+  return '(' + esc(clientId) + '::uuid, ' + esc(adAccountId) + ', ' + esc(x.date) + '::date, ' + esc(x.ad_id) + ', ' + esc(x.ad_name) + ', ' + (x.campaign_id ? esc(x.campaign_id) : 'NULL') + ', ' + esc(meta.format) + ', ' + (meta.thumbnailUrl ? esc(meta.thumbnailUrl) : 'NULL') + ', ' + x.impressions + ', ' + x.clicks + ', ' + x.cost + ', ' + x.conversions + ', ' + x.conversions_value + ', ' + x.frequency + ')';
 }).join(',');
 const upsertQuery =
-  'INSERT INTO meta_ad_daily (client_id, ad_account_id, date, ad_id, ad_name, campaign_id, format, impressions, clicks, cost, conversions, conversions_value, frequency) VALUES ' +
+  'INSERT INTO meta_ad_daily (client_id, ad_account_id, date, ad_id, ad_name, campaign_id, format, thumbnail_url, impressions, clicks, cost, conversions, conversions_value, frequency) VALUES ' +
   values +
-  ' ON CONFLICT (client_id, date, ad_id) DO UPDATE SET ad_account_id = EXCLUDED.ad_account_id, ad_name = EXCLUDED.ad_name, campaign_id = EXCLUDED.campaign_id, format = EXCLUDED.format, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, cost = EXCLUDED.cost, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, frequency = EXCLUDED.frequency, updated_at = now();';
+  ' ON CONFLICT (client_id, date, ad_id) DO UPDATE SET ad_account_id = EXCLUDED.ad_account_id, ad_name = EXCLUDED.ad_name, campaign_id = EXCLUDED.campaign_id, format = EXCLUDED.format, thumbnail_url = EXCLUDED.thumbnail_url, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, cost = EXCLUDED.cost, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, frequency = EXCLUDED.frequency, updated_at = now();';
 return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: byAdDate.size } };`,
     },
     position: [1800, 200],

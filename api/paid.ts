@@ -72,6 +72,7 @@ interface AdRow {
   ad_id: string
   ad_name: string
   format: string | null
+  thumbnail_url: string | null
   impressions: string | number
   clicks: string | number
   cost: string | number
@@ -267,6 +268,7 @@ async function handleRequest(req: any, res: any) {
       adId: string
       name: string
       format: string
+      thumbnailUrl: string | null
       impresiones: number
       clics: number
       ctr: number
@@ -284,13 +286,14 @@ async function handleRequest(req: any, res: any) {
         const adRows = (await adsResp.json()) as AdRow[]
         const byAd = new Map<
           string,
-          { adId: string; name: string; format: string; impressions: number; clicks: number; cost: number; conversions: number; conversionsValue: number; frequencySum: number; days: number }
+          { adId: string; name: string; format: string; thumbnailUrl: string | null; impressions: number; clicks: number; cost: number; conversions: number; conversionsValue: number; frequencySum: number; days: number }
         >()
         for (const r of adRows) {
           const cur = byAd.get(r.ad_id) ?? {
             adId: r.ad_id,
             name: r.ad_name,
             format: r.format || 'otro',
+            thumbnailUrl: null,
             impressions: 0,
             clicks: 0,
             cost: 0,
@@ -306,12 +309,14 @@ async function handleRequest(req: any, res: any) {
           cur.conversionsValue += Number(r.conversions_value)
           cur.frequencySum += Number(r.frequency)
           cur.days += 1
+          if (r.thumbnail_url) cur.thumbnailUrl = r.thumbnail_url
           byAd.set(r.ad_id, cur)
         }
         metaCreatives = Array.from(byAd.values()).map((c) => ({
           adId: c.adId,
           name: c.name,
           format: c.format,
+          thumbnailUrl: c.thumbnailUrl,
           impresiones: c.impressions,
           clics: c.clicks,
           ctr: c.impressions ? round2((c.clicks / c.impressions) * 100) : 0,

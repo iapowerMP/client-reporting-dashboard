@@ -148,6 +148,7 @@ create table if not exists meta_ad_daily (
   ad_name            text not null,
   campaign_id        text,
   format             text,                    -- 'imagen' | 'video' | 'carrusel' | 'coleccion' | 'dpa' | 'otro'
+  thumbnail_url      text,                    -- miniatura de Meta (CDN pública, no requiere sesión en Business Manager)
   impressions        bigint not null default 0,
   clicks             bigint not null default 0,
   cost               numeric(14,2) not null default 0,
@@ -157,6 +158,9 @@ create table if not exists meta_ad_daily (
   updated_at         timestamptz not null default now(),
   unique (client_id, date, ad_id)
 );
+
+-- Por si la tabla ya existía de antes de añadir esta columna:
+alter table meta_ad_daily add column if not exists thumbnail_url text;
 
 create index if not exists idx_meta_ad_daily_client_date
   on meta_ad_daily (client_id, date);

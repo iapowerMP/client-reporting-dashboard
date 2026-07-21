@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useOutletContext, useParams } from 'react-router-dom'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, ImageOff, X } from 'lucide-react'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -236,8 +236,30 @@ function getCampaignColumns(businessType: BusinessType, target: number | null): 
   return base
 }
 
-function getCreativeColumns(businessType: BusinessType, metaAdAccountId: string | null): Column<MetaCreative>[] {
+function getCreativeColumns(
+  businessType: BusinessType,
+  metaAdAccountId: string | null,
+  onPreview: (creative: MetaCreative) => void,
+): Column<MetaCreative>[] {
   return [
+    {
+      key: 'thumbnail',
+      header: '',
+      render: (r) =>
+        r.thumbnailUrl ? (
+          <button
+            onClick={() => onPreview(r)}
+            className="block h-10 w-10 overflow-hidden rounded-control border border-border transition-opacity hover:opacity-80"
+            title="Previsualizar anuncio"
+          >
+            <img src={r.thumbnailUrl} alt={r.name} className="h-full w-full object-cover" />
+          </button>
+        ) : (
+          <div className="flex h-10 w-10 items-center justify-center rounded-control border border-border bg-base text-text-secondary">
+            <ImageOff className="h-4 w-4" />
+          </div>
+        ),
+    },
     { key: 'name', header: 'Anuncio', sortable: true },
     { key: 'format', header: 'Formato', sortable: true },
     { key: 'impresiones', header: 'Impresiones', align: 'right', sortable: true, render: (r) => formatNumber(r.impresiones) },
@@ -459,6 +481,7 @@ function PaidMediaTabs({
 }) {
   const [tab, setTab] = useState<PaidTab>('Todas')
   const activeTab: PaidTab = visibleTabs.includes(tab) ? tab : 'Todas'
+  const [previewCreative, setPreviewCreative] = useState<MetaCreative | null>(null)
   const visiblePlatforms: string[] = [...platformTabs]
 
   const rows =
@@ -490,7 +513,7 @@ function PaidMediaTabs({
   const scatterXLabel = conversionLabel(businessType)
   const scatterYLabel = efficiencyLabel(businessType)
 
-  const creativeColumns = getCreativeColumns(businessType, data.metaAdAccountId)
+  const creativeColumns = getCreativeColumns(businessType, data.metaAdAccountId, setPreviewCreative)
   const sortedCreatives = [...data.metaCreatives].sort((a, b) =>
     businessType === 'ecommerce' ? b.roas - a.roas : a.costeConv - b.costeConv,
   )
@@ -787,6 +810,43 @@ function PaidMediaTabs({
             <DataTable columns={creativeColumns} data={sortedCreatives} rowKey={(r) => r.adId} />
           )}
         </ChartCard>
+      )}
+
+      {previewCreative && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setPreviewCreative(null)}
+        >
+          <div
+            className="max-w-sm rounded-card border border-border bg-card p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-white">{previewCreative.name}</p>
+                <p className="text-xs text-text-secondary">{previewCreative.format}</p>
+              </div>
+              <button
+                onClick={() => setPreviewCreative(null)}
+                className="rounded-control p-1 text-text-secondary hover:bg-white/5 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {previewCreative.thumbnailUrl && (
+              <img
+                src={previewCreative.thumbnailUrl}
+                alt={previewCreative.name}
+                className="w-full rounded-control"
+              />
+            )}
+            {previewCreative.format === 'video' && (
+              <p className="mt-2 text-xs text-text-secondary">
+                Vista previa estática (fotograma) — el vídeo completo solo puede verse en Meta Ads Manager.
+              </p>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )
