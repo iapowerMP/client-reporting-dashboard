@@ -216,9 +216,9 @@ const fetchFormatApi = node({
       queryParameters: {
         parameters: [
           { name: 'fields', value: 'id,creative{object_type,thumbnail_url}' },
-          { name: 'thumbnail_width', value: '400' },
-          { name: 'thumbnail_height', value: '400' },
-          { name: 'limit', value: '500' },
+          { name: 'thumbnail_width', value: '150' },
+          { name: 'thumbnail_height', value: '150' },
+          { name: 'limit', value: '100' },
         ],
       },
     },
@@ -271,9 +271,9 @@ const fetchFormatOauth = node({
       queryParameters: {
         parameters: [
           { name: 'fields', value: 'id,creative{object_type,thumbnail_url}' },
-          { name: 'thumbnail_width', value: '400' },
-          { name: 'thumbnail_height', value: '400' },
-          { name: 'limit', value: '500' },
+          { name: 'thumbnail_width', value: '150' },
+          { name: 'thumbnail_height', value: '150' },
+          { name: 'limit', value: '100' },
         ],
       },
       sendHeaders: true,
