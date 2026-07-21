@@ -63,20 +63,11 @@ export interface SummaryCard {
   footer: string
 }
 
-/** Punto del gráfico global de rendimiento (3 series). */
+/** Punto del gráfico de evolución de Paid Media (inversión vs conversiones). */
 export interface GlobalPerfPoint {
   date: string
-  paid: number
-  seo: number
-  social: number
-}
-
-/** Fila de la tabla de actividad reciente del overview. */
-export interface AlertRow {
-  fecha: string
-  servicio: string
-  detalle: string
-  estado: Extract<StatusVariant, 'Revisar' | 'Positivo' | 'Destacado'>
+  inversion: number
+  conversiones: number
 }
 
 /* ========================================================================== */

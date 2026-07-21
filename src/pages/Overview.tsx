@@ -12,9 +12,7 @@ import {
 import { DollarSign, Search, Smartphone, type LucideIcon } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import ChartTooltip from '@/components/shared/ChartTooltip'
-import DataTable, { type Column } from '@/components/shared/DataTable'
-import StatusBadge from '@/components/shared/StatusBadge'
-import { cn, formatCompact, formatNumber } from '@/lib/utils'
+import { cn, formatCompact, formatCurrency, formatNumber } from '@/lib/utils'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
 import { useDateRange } from '@/lib/dateRange'
@@ -22,17 +20,10 @@ import { useReportConfig } from '@/lib/reportConfig'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 import {
   type SummaryCard,
-  type AlertRow,
   PAID_TAB_TO_CONNECTION,
   SEO_TAB_TO_CONNECTION,
   SOCIAL_TAB_TO_CONNECTION,
 } from '@/data/catalog'
-
-const SERVICIO_TO_CATEGORY: Record<string, SummaryCard['key']> = {
-  'Paid Media': 'paid',
-  SEO: 'seo',
-  RRSS: 'social',
-}
 
 const CARD_ICONS: Record<SummaryCard['key'], LucideIcon> = {
   paid: DollarSign,
@@ -84,18 +75,6 @@ function SummaryCardView({ card }: { card: SummaryCard }) {
   )
 }
 
-const activityColumns: Column<AlertRow>[] = [
-  { key: 'fecha', header: 'Fecha' },
-  { key: 'servicio', header: 'Servicio' },
-  { key: 'detalle', header: 'Detalle' },
-  {
-    key: 'estado',
-    header: 'Estado',
-    align: 'right',
-    render: (row) => <StatusBadge status={row.estado} />,
-  },
-]
-
 export default function Overview() {
   const { clientSlug = '' } = useParams()
   const { range } = useDateRange()
@@ -115,12 +94,8 @@ export default function Overview() {
   if (error || !data)
     return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
 
-  const { globalPerformance, recentActivity } = data
+  const { globalPerformance } = data
   const summary = data.summary.filter((card) => categoryVisible[card.key])
-  const visibleActivity = recentActivity.filter((row) => {
-    const cat = SERVICIO_TO_CATEGORY[row.servicio]
-    return cat ? categoryVisible[cat] : true
-  })
 
   return (
     <div className="space-y-6">
@@ -131,8 +106,8 @@ export default function Overview() {
         ))}
       </div>
 
-      {/* Gráfico principal */}
-      <ChartCard title="Rendimiento global — Últimos 30 días">
+      {/* Gráfico principal: evolución de inversión y conversiones de Paid Media */}
+      <ChartCard title="Evolución — Inversión y conversiones">
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
@@ -149,6 +124,17 @@ export default function Overview() {
                 interval={4}
               />
               <YAxis
+                yAxisId="inversion"
+                stroke="#9CA3AF"
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => formatCompact(v as number)}
+                width={44}
+              />
+              <YAxis
+                yAxisId="conversiones"
+                orientation="right"
                 stroke="#9CA3AF"
                 fontSize={11}
                 tickLine={false}
@@ -157,55 +143,38 @@ export default function Overview() {
                 width={44}
               />
               <Tooltip
-                content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
+                content={
+                  <ChartTooltip
+                    formatter={(v, name) => (name === 'Inversión' ? formatCurrency(v) : formatNumber(v))}
+                  />
+                }
                 cursor={{ stroke: '#2A2D36' }}
               />
               <Legend
                 wrapperStyle={{ fontSize: 12, paddingTop: 12 }}
                 iconType="plainline"
               />
-              {categoryVisible.paid && (
-                <Line
-                  type="monotone"
-                  dataKey="paid"
-                  name="Inversión Paid (€)"
-                  stroke="#F2FE54"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              )}
-              {categoryVisible.seo && (
-                <Line
-                  type="monotone"
-                  dataKey="seo"
-                  name="Sesiones SEO"
-                  stroke="#60A5FA"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              )}
-              {categoryVisible.social && (
-                <Line
-                  type="monotone"
-                  dataKey="social"
-                  name="Alcance RRSS"
-                  stroke="#A78BFA"
-                  strokeWidth={2}
-                  dot={false}
-                />
-              )}
+              <Line
+                yAxisId="inversion"
+                type="monotone"
+                dataKey="inversion"
+                name="Inversión"
+                stroke="#F2FE54"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                yAxisId="conversiones"
+                type="monotone"
+                dataKey="conversiones"
+                name="Conversiones"
+                stroke="#60A5FA"
+                strokeWidth={2}
+                dot={false}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>
-      </ChartCard>
-
-      {/* Tabla de alertas / actividad reciente */}
-      <ChartCard title="Actividad reciente" noPadding>
-        <DataTable
-          columns={activityColumns}
-          data={visibleActivity}
-          rowKey={(_, i) => i}
-        />
       </ChartCard>
     </div>
   )

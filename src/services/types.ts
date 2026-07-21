@@ -6,7 +6,6 @@
 import type {
   SummaryCard,
   GlobalPerfPoint,
-  AlertRow,
   Campaign,
   InvConvPoint,
   PlatformSlice,
@@ -25,7 +24,6 @@ import type {
 export interface OverviewData {
   summary: SummaryCard[]
   globalPerformance: GlobalPerfPoint[]
-  recentActivity: AlertRow[]
 }
 
 export interface PaidData {
