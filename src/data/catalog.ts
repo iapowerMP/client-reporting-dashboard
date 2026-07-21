@@ -117,7 +117,6 @@ const PAID_KPI_LABELS = [
   'CPM',
   'Conversiones',
   'Coste/Conv',
-  'ROAS',
 ] as const
 
 const ECOMMERCE_KPI_LABELS = ['Inversión', 'Ingresos', 'Ventas', 'Coste/Venta', 'ROAS', 'CTR'] as const
@@ -223,7 +222,6 @@ export function computePaidKpis(
     CPM: formatCurrency(t.cpm, 2),
     Conversiones: formatNumber(t.conversiones),
     'Coste/Conv': formatCurrency(t.costeConv, 2),
-    ROAS: formatRoas(t.roas),
   }
 
   return PAID_KPI_LABELS.map((label) => ({ label, value: computed[label] }))
@@ -326,7 +324,6 @@ export function computeFunnel(
 ): { steps: FunnelStep[]; transitions: FunnelTransition[] } {
   const t = aggregatePaidRaw(rows)
   const lastLabel = businessType === 'ecommerce' ? 'Ventas' : businessType === 'leadgen' ? 'Leads' : 'Conversiones'
-  const costLabel = businessType === 'ecommerce' ? 'Coste/Venta' : businessType === 'leadgen' ? 'Coste/Lead' : 'Coste/Conv'
 
   return {
     steps: [
@@ -336,7 +333,7 @@ export function computeFunnel(
     ],
     transitions: [
       { label: 'CTR', value: formatPercent(t.ctr) },
-      { label: costLabel, value: formatCurrency(t.costeConv, 2) },
+      { label: 'Tasa de conversión', value: formatPercent(t.tasaConversion) },
     ],
   }
 }

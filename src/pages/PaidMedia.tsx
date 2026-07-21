@@ -80,7 +80,8 @@ function efficiencyLabel(businessType: BusinessType): string {
 /** KPI a resaltar en las cards, según el tipo de negocio. */
 function highlightLabel(businessType: BusinessType): string {
   if (businessType === 'leadgen') return 'Leads'
-  return 'ROAS'
+  if (businessType === 'ecommerce') return 'ROAS'
+  return 'Conversiones'
 }
 
 function formatResult(businessType: BusinessType, v: number): string {
@@ -89,6 +90,22 @@ function formatResult(businessType: BusinessType, v: number): string {
 
 function formatEfficiency(businessType: BusinessType, v: number): string {
   return businessType === 'ecommerce' ? formatRoas(v, 1) : formatCurrency(v, 2)
+}
+
+/** Ancho (%) de cada escalón del funnel visual. Usa raíz cuadrada (en vez de
+ * lineal) para que los últimos pasos, normalmente muy pequeños frente a
+ * impresiones, sigan siendo legibles — con un mínimo y estrictamente
+ * decreciente entre escalones consecutivos. */
+function computeFunnelWidths(steps: { value: number }[]): number[] {
+  const max = steps[0]?.value || 0
+  const widths: number[] = []
+  steps.forEach((s, i) => {
+    const raw = max ? Math.sqrt(s.value / max) * 100 : 0
+    let w = Math.max(raw, 20)
+    if (i > 0) w = Math.min(w, widths[i - 1] - 10)
+    widths.push(Math.max(w, 20))
+  })
+  return widths
 }
 
 /** Cuenta los días del rango (inclusive), para prorratear objetivos mensuales. */
@@ -215,16 +232,7 @@ function getCampaignColumns(businessType: BusinessType, target: number | null): 
     ]
   }
 
-  return [
-    ...base,
-    {
-      key: 'roas',
-      header: 'ROAS',
-      align: 'right',
-      sortable: true,
-      render: (r) => formatRoas(r.roas, 1),
-    },
-  ]
+  return base
 }
 
 function getCreativeColumns(businessType: BusinessType): Column<MetaCreative>[] {
@@ -434,6 +442,7 @@ function PaidMediaTabs({
   const [tab, setTab] = useState<PaidTab>('Todas')
   const activeTab: PaidTab = visibleTabs.includes(tab) ? tab : 'Todas'
   const visiblePlatforms: string[] = [...platformTabs]
+  const [creativeSort, setCreativeSort] = useState<'eficiencia' | 'conversiones' | 'clics' | 'impresiones'>('eficiencia')
 
   const rows =
     activeTab === 'Todas'
@@ -459,14 +468,19 @@ function PaidMediaTabs({
 
   const platformShareData = computePlatformShareData(rows, visiblePlatforms, businessType)
   const funnel = computeFunnel(rows, businessType)
+  const funnelWidths = computeFunnelWidths(funnel.steps)
   const scatterPoints = computeScatterPoints(rows, businessType)
   const scatterXLabel = conversionLabel(businessType)
   const scatterYLabel = efficiencyLabel(businessType)
 
   const creativeColumns = getCreativeColumns(businessType)
-  const sortedCreatives = [...data.metaCreatives].sort((a, b) =>
-    businessType === 'ecommerce' ? b.roas - a.roas : a.costeConv - b.costeConv,
-  )
+  const creativeEfficiencyLabel = businessType === 'ecommerce' ? 'ROAS' : 'CPL'
+  const sortedCreatives = [...data.metaCreatives].sort((a, b) => {
+    if (creativeSort === 'conversiones') return b.conversiones - a.conversiones
+    if (creativeSort === 'clics') return b.clics - a.clics
+    if (creativeSort === 'impresiones') return b.impresiones - a.impresiones
+    return businessType === 'ecommerce' ? b.roas - a.roas : a.costeConv - b.costeConv
+  })
 
   return (
     <div className="space-y-6">
@@ -659,22 +673,36 @@ function PaidMediaTabs({
 
           {/* Funnel simplificado: Impresiones → Clics → Leads/Ventas */}
           <ChartCard title={`Funnel — Impresiones → Clics → ${conversionLabel(businessType)}`}>
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              {funnel.steps.map((step, i) => (
-                <div key={step.label} className="flex flex-1 items-center gap-3">
-                  <div className="flex-1 rounded-card border border-border bg-base p-4 text-center">
-                    <p className="text-xs text-text-secondary">{step.label}</p>
-                    <p className="mt-1 text-xl font-bold text-white">{step.displayValue}</p>
-                  </div>
-                  {i < funnel.transitions.length && (
-                    <div className="flex shrink-0 flex-col items-center text-xs">
-                      <span className="text-text-secondary">→</span>
-                      <span className="font-semibold text-accent">{funnel.transitions[i].label}</span>
-                      <span className="text-text-secondary">{funnel.transitions[i].value}</span>
+            <div className="mx-auto flex max-w-md flex-col items-center">
+              {funnel.steps.map((step, i) => {
+                const top = funnelWidths[i]
+                const bottom = i < funnelWidths.length - 1 ? funnelWidths[i + 1] : Math.max(top - 10, 20)
+                const insetTop = (100 - top) / 2
+                const insetBottom = (100 - bottom) / 2
+                return (
+                  <div key={step.label} className="w-full">
+                    <div className="relative h-16 w-full">
+                      <div
+                        className="absolute inset-0 bg-accent"
+                        style={{
+                          clipPath: `polygon(${insetTop}% 0%, ${100 - insetTop}% 0%, ${100 - insetBottom}% 100%, ${insetBottom}% 100%)`,
+                        }}
+                      />
+                      <div className="relative flex h-full flex-col items-center justify-center text-center">
+                        <p className="text-xs font-medium text-base">{step.label}</p>
+                        <p className="text-lg font-bold text-base">{step.displayValue}</p>
+                      </div>
                     </div>
-                  )}
-                </div>
-              ))}
+                    {i < funnel.transitions.length && (
+                      <div className="flex flex-col items-center gap-0.5 py-2 text-xs">
+                        <span className="text-text-secondary">▼</span>
+                        <span className="font-semibold text-accent">{funnel.transitions[i].label}</span>
+                        <span className="text-text-secondary">{funnel.transitions[i].value}</span>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </ChartCard>
         </>
@@ -738,8 +766,23 @@ function PaidMediaTabs({
       {/* Creatividades Meta (nivel anuncio) — solo pestaña Meta Ads */}
       {activeTab === 'Meta Ads' && (
         <ChartCard
-          title={`Creatividades — ordenadas por ${businessType === 'ecommerce' ? 'ROAS descendente' : 'CPL ascendente'}`}
+          title="Creatividades"
           noPadding
+          action={
+            <label className="flex items-center gap-2 text-xs text-text-secondary">
+              Ordenar por
+              <select
+                value={creativeSort}
+                onChange={(e) => setCreativeSort(e.target.value as typeof creativeSort)}
+                className="rounded-control border border-border bg-base px-2 py-1 text-xs text-text-primary"
+              >
+                <option value="eficiencia">{creativeEfficiencyLabel}</option>
+                <option value="conversiones">{conversionLabel(businessType)}</option>
+                <option value="clics">Clics</option>
+                <option value="impresiones">Impresiones</option>
+              </select>
+            </label>
+          }
         >
           {sortedCreatives.length === 0 ? (
             <p className="py-8 text-center text-sm text-text-secondary">
