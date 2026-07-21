@@ -165,13 +165,11 @@ async function handleRequest(req: any, res: any) {
     const seoDates = Array.from(seoByDate.keys()).sort()
     const seoTotalSessions = seoDates.reduce((s, d) => s + (seoByDate.get(d) ?? 0), 0)
 
-    // --- Serie combinada para el gráfico "Rendimiento global" ---
-    const allDates = Array.from(new Set([...paidDates, ...seoDates])).sort()
-    const globalPerformance = allDates.map((date) => ({
+    // --- Serie de evolución de Paid Media (inversión vs conversiones) ---
+    const globalPerformance = paidDates.map((date) => ({
       date: formatDateLabel(date),
-      paid: round2(paidByDate.get(date)?.inversion ?? 0),
-      seo: seoByDate.get(date) ?? 0,
-      social: 0,
+      inversion: round2(paidByDate.get(date)!.inversion),
+      conversiones: round2(paidByDate.get(date)!.conversiones),
     }))
 
     const summary = [
@@ -198,7 +196,7 @@ async function handleRequest(req: any, res: any) {
       },
     ]
 
-    res.status(200).json({ summary, globalPerformance, recentActivity: [] })
+    res.status(200).json({ summary, globalPerformance })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudo leer el resumen desde Supabase.' })
   }
