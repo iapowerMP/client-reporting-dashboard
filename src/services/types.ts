@@ -37,6 +37,9 @@ export interface PaidData {
   /** Insights a nivel de anuncio de Meta Ads (tabla "Creatividades") —
    * vacío si Meta Ads no está conectado o aún no hay filas para el cliente. */
   metaCreatives: MetaCreative[]
+  /** ID numérico (sin "act_") de la cuenta de Meta Ads, para enlazar cada
+   * creatividad a Ads Manager — null si Meta Ads no está conectado. */
+  metaAdAccountId: string | null
 }
 
 export interface SeoData {

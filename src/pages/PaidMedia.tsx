@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useOutletContext, useParams } from 'react-router-dom'
+import { ExternalLink } from 'lucide-react'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -235,7 +236,7 @@ function getCampaignColumns(businessType: BusinessType, target: number | null): 
   return base
 }
 
-function getCreativeColumns(businessType: BusinessType): Column<MetaCreative>[] {
+function getCreativeColumns(businessType: BusinessType, metaAdAccountId: string | null): Column<MetaCreative>[] {
   return [
     { key: 'name', header: 'Anuncio', sortable: true },
     { key: 'format', header: 'Formato', sortable: true },
@@ -256,6 +257,23 @@ function getCreativeColumns(businessType: BusinessType): Column<MetaCreative>[] 
       render: (r) => (businessType === 'ecommerce' ? formatRoas(r.roas, 1) : formatCurrency(r.costeConv, 2)),
     },
     { key: 'frecuencia', header: 'Frecuencia', align: 'right', sortable: true, render: (r) => r.frecuencia.toFixed(2) },
+    {
+      key: 'ver',
+      header: '',
+      align: 'center',
+      render: (r) =>
+        metaAdAccountId ? (
+          <a
+            href={`https://adsmanager.facebook.com/adsmanager/manage/ads?act=${metaAdAccountId}&selected_ad_ids=${r.adId}`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+            title="Ver anuncio en Meta Ads Manager"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        ) : null,
+    },
   ]
 }
 
@@ -442,7 +460,6 @@ function PaidMediaTabs({
   const [tab, setTab] = useState<PaidTab>('Todas')
   const activeTab: PaidTab = visibleTabs.includes(tab) ? tab : 'Todas'
   const visiblePlatforms: string[] = [...platformTabs]
-  const [creativeSort, setCreativeSort] = useState<'eficiencia' | 'conversiones' | 'clics' | 'impresiones'>('eficiencia')
 
   const rows =
     activeTab === 'Todas'
@@ -473,14 +490,10 @@ function PaidMediaTabs({
   const scatterXLabel = conversionLabel(businessType)
   const scatterYLabel = efficiencyLabel(businessType)
 
-  const creativeColumns = getCreativeColumns(businessType)
-  const creativeEfficiencyLabel = businessType === 'ecommerce' ? 'ROAS' : 'CPL'
-  const sortedCreatives = [...data.metaCreatives].sort((a, b) => {
-    if (creativeSort === 'conversiones') return b.conversiones - a.conversiones
-    if (creativeSort === 'clics') return b.clics - a.clics
-    if (creativeSort === 'impresiones') return b.impresiones - a.impresiones
-    return businessType === 'ecommerce' ? b.roas - a.roas : a.costeConv - b.costeConv
-  })
+  const creativeColumns = getCreativeColumns(businessType, data.metaAdAccountId)
+  const sortedCreatives = [...data.metaCreatives].sort((a, b) =>
+    businessType === 'ecommerce' ? b.roas - a.roas : a.costeConv - b.costeConv,
+  )
 
   return (
     <div className="space-y-6">
@@ -765,31 +778,13 @@ function PaidMediaTabs({
 
       {/* Creatividades Meta (nivel anuncio) — solo pestaña Meta Ads */}
       {activeTab === 'Meta Ads' && (
-        <ChartCard
-          title="Creatividades"
-          noPadding
-          action={
-            <label className="flex items-center gap-2 text-xs text-text-secondary">
-              Ordenar por
-              <select
-                value={creativeSort}
-                onChange={(e) => setCreativeSort(e.target.value as typeof creativeSort)}
-                className="rounded-control border border-border bg-base px-2 py-1 text-xs text-text-primary"
-              >
-                <option value="eficiencia">{creativeEfficiencyLabel}</option>
-                <option value="conversiones">{conversionLabel(businessType)}</option>
-                <option value="clics">Clics</option>
-                <option value="impresiones">Impresiones</option>
-              </select>
-            </label>
-          }
-        >
+        <ChartCard title="Creatividades" noPadding>
           {sortedCreatives.length === 0 ? (
             <p className="py-8 text-center text-sm text-text-secondary">
               Aún no hay datos de creatividades de Meta Ads.
             </p>
           ) : (
-            <DataTable columns={creativeColumns} data={sortedCreatives} rowKey={(r) => r.name} />
+            <DataTable columns={creativeColumns} data={sortedCreatives} rowKey={(r) => r.adId} />
           )}
         </ChartCard>
       )}
