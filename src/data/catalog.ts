@@ -399,6 +399,7 @@ export interface PlatformSlice {
 
 /** Fila de la tabla de creatividades de Meta Ads (nivel anuncio). */
 export interface MetaCreative {
+  adId: string
   name: string
   format: string
   impresiones: number

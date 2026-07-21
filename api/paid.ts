@@ -264,6 +264,7 @@ async function handleRequest(req: any, res: any) {
     // --- Creatividades Meta (nivel anuncio), solo si hay meta-ads conectado ---
     const metaAccountId = accountByPlatform.get('meta-ads') ?? ''
     let metaCreatives: Array<{
+      adId: string
       name: string
       format: string
       impresiones: number
@@ -283,10 +284,11 @@ async function handleRequest(req: any, res: any) {
         const adRows = (await adsResp.json()) as AdRow[]
         const byAd = new Map<
           string,
-          { name: string; format: string; impressions: number; clicks: number; cost: number; conversions: number; conversionsValue: number; frequencySum: number; days: number }
+          { adId: string; name: string; format: string; impressions: number; clicks: number; cost: number; conversions: number; conversionsValue: number; frequencySum: number; days: number }
         >()
         for (const r of adRows) {
           const cur = byAd.get(r.ad_id) ?? {
+            adId: r.ad_id,
             name: r.ad_name,
             format: r.format || 'otro',
             impressions: 0,
@@ -307,6 +309,7 @@ async function handleRequest(req: any, res: any) {
           byAd.set(r.ad_id, cur)
         }
         metaCreatives = Array.from(byAd.values()).map((c) => ({
+          adId: c.adId,
           name: c.name,
           format: c.format,
           impresiones: c.impressions,
@@ -320,7 +323,13 @@ async function handleRequest(req: any, res: any) {
       }
     }
 
-    res.status(200).json({ campaigns, invConv, invConvByPlatform, metaCreatives })
+    res.status(200).json({
+      campaigns,
+      invConv,
+      invConvByPlatform,
+      metaCreatives,
+      metaAdAccountId: metaAccountId ? metaAccountId.replace(/^act_/, '') : null,
+    })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudo leer paid media desde Supabase.' })
   }
