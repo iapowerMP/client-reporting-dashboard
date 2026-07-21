@@ -37,7 +37,11 @@ export default function KpiCard({
         <p
           className={cn(
             'mt-1 text-xs font-semibold',
-            deltaPositive ? 'text-positive' : 'text-negative',
+            deltaPositive === null
+              ? 'text-text-secondary'
+              : deltaPositive
+                ? 'text-positive'
+                : 'text-negative',
           )}
         >
           {delta}

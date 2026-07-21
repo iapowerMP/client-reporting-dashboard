@@ -304,11 +304,17 @@ function Field({
   defaultValue,
   placeholder,
   inputRef,
+  type = 'text',
+  step,
+  hint,
 }: {
   label: string
-  defaultValue?: string
+  defaultValue?: string | number
   placeholder?: string
   inputRef?: React.RefObject<HTMLInputElement>
+  type?: 'text' | 'number'
+  step?: string
+  hint?: string
 }) {
   return (
     <label className="block">
@@ -317,11 +323,13 @@ function Field({
       </span>
       <input
         ref={inputRef}
-        type="text"
+        type={type}
+        step={step}
         defaultValue={defaultValue}
         placeholder={placeholder}
         className="w-full rounded-control border border-border bg-base px-3 py-2 text-sm text-white placeholder:text-text-secondary/60 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
       />
+      {hint && <p className="mt-1.5 text-xs text-text-secondary">{hint}</p>}
     </label>
   )
 }
@@ -622,21 +630,34 @@ export default function Settings() {
   const clientSectorRef = useRef<HTMLInputElement>(null)
   const clientWebsiteRef = useRef<HTMLInputElement>(null)
   const clientBusinessTypeRef = useRef<HTMLSelectElement>(null)
+  const cplTargetRef = useRef<HTMLInputElement>(null)
+  const leadsTargetRef = useRef<HTMLInputElement>(null)
+  const roasTargetRef = useRef<HTMLInputElement>(null)
+  const revenueTargetRef = useRef<HTMLInputElement>(null)
   const [savingClient, setSavingClient] = useState(false)
 
   const handleSaveClient = async () => {
     setSavingClient(true)
     try {
+      // Los campos de target solo se envían si están montados (el tipo de
+      // negocio guardado determina cuáles se muestran) — así no se borra por
+      // accidente el target del otro tipo de negocio al cambiar de uno a otro.
+      const payload: Record<string, string> = {
+        client: clientSlug,
+        name: clientNameRef.current?.value ?? '',
+        sector: clientSectorRef.current?.value ?? '',
+        website: clientWebsiteRef.current?.value ?? '',
+        businessType: clientBusinessTypeRef.current?.value ?? '',
+      }
+      if (cplTargetRef.current) payload.cplTarget = cplTargetRef.current.value
+      if (leadsTargetRef.current) payload.leadsTargetMonthly = leadsTargetRef.current.value
+      if (roasTargetRef.current) payload.roasTarget = roasTargetRef.current.value
+      if (revenueTargetRef.current) payload.revenueTargetMonthly = revenueTargetRef.current.value
+
       const resp = await fetch('/api/clients', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
-        body: JSON.stringify({
-          client: clientSlug,
-          name: clientNameRef.current?.value ?? '',
-          sector: clientSectorRef.current?.value ?? '',
-          website: clientWebsiteRef.current?.value ?? '',
-          businessType: clientBusinessTypeRef.current?.value ?? '',
-        }),
+        body: JSON.stringify(payload),
       })
       if (!resp.ok) throw new Error()
       const body = await resp.json()
@@ -755,9 +776,53 @@ export default function Settings() {
             </select>
             <p className="mt-1.5 text-xs text-text-secondary">
               Cambia qué KPIs destaca Paid Media: leads y coste por lead, o
-              ventas y ROAS.
+              ventas y ROAS. Guarda para ver los campos de target correspondientes.
             </p>
           </label>
+          {clientData?.businessType === 'leadgen' && (
+            <>
+              <Field
+                label="CPL target (€)"
+                type="number"
+                step="0.01"
+                defaultValue={clientData?.cplTarget ?? undefined}
+                placeholder="25"
+                inputRef={cplTargetRef}
+                hint="Coste por lead objetivo — colorea la tabla de campañas y el semáforo."
+              />
+              <Field
+                label="Objetivo de leads / mes"
+                type="number"
+                step="1"
+                defaultValue={clientData?.leadsTargetMonthly ?? undefined}
+                placeholder="150"
+                inputRef={leadsTargetRef}
+                hint="Se prorratea según el rango de fechas del informe."
+              />
+            </>
+          )}
+          {clientData?.businessType === 'ecommerce' && (
+            <>
+              <Field
+                label="ROAS target"
+                type="number"
+                step="0.1"
+                defaultValue={clientData?.roasTarget ?? undefined}
+                placeholder="4.0"
+                inputRef={roasTargetRef}
+                hint="Colorea la tabla de campañas y el semáforo."
+              />
+              <Field
+                label="Objetivo de revenue / mes (€)"
+                type="number"
+                step="0.01"
+                defaultValue={clientData?.revenueTargetMonthly ?? undefined}
+                placeholder="20000"
+                inputRef={revenueTargetRef}
+                hint="Se prorratea según el rango de fechas del informe."
+              />
+            </>
+          )}
           <div>
             <span className="mb-1.5 block text-xs font-medium text-text-secondary">
               Logo

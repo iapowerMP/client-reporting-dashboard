@@ -7,7 +7,9 @@
  * POST { name, sector?, website? } -> crea un cliente nuevo, generando un
  *         slug único a partir del nombre, y lo devuelve. Ese slug es el que
  *         identifica al cliente en la URL (/c/<slug>/...).
- * PATCH { client, name?, sector?, website?, logoUrl?, businessType?, password?, removePassword? }
+ * PATCH { client, name?, sector?, website?, logoUrl?, businessType?,
+ *          cplTarget?, leadsTargetMonthly?, roasTarget?, revenueTargetMonthly?,
+ *          password?, removePassword? }
  *         -> actualiza los datos del cliente (identificado por su slug actual).
  *         Si cambia el nombre, el slug (y por tanto la URL /c/<slug>/...) se
  *         regenera a partir del nuevo nombre. Si el cliente ya tiene
@@ -72,7 +74,7 @@ async function handleRequest(req: any, res: any) {
 
     if (slug) {
       try {
-        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type`
+        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type,cpl_target,leads_target_monthly,roas_target,revenue_target_monthly`
         const resp = await fetch(url, { headers })
         if (!resp.ok) {
           res.status(502).json({ error: `Supabase respondió ${resp.status} al leer clients.` })
@@ -145,13 +147,26 @@ async function handleRequest(req: any, res: any) {
   }
 
   if (req.method === 'PATCH') {
-    const { client: slug, name, sector, website, logoUrl, businessType, password, removePassword } = req.body ?? {}
+    const {
+      client: slug,
+      name,
+      sector,
+      website,
+      logoUrl,
+      businessType,
+      cplTarget,
+      leadsTargetMonthly,
+      roasTarget,
+      revenueTargetMonthly,
+      password,
+      removePassword,
+    } = req.body ?? {}
     if (!slug || typeof slug !== 'string') {
       res.status(400).json({ error: 'Falta el campo client (slug del cliente).' })
       return
     }
 
-    const updates: Record<string, string | null> = {}
+    const updates: Record<string, string | number | null> = {}
     if (typeof name === 'string' && name.trim()) updates.name = name.trim()
     if (typeof sector === 'string') updates.sector = sector.trim() || null
     if (typeof website === 'string') updates.website = website.trim() || null
@@ -160,6 +175,24 @@ async function handleRequest(req: any, res: any) {
       updates.business_type = businessType
     } else if (businessType === '' || businessType === null) {
       updates.business_type = null
+    }
+    // Targets de Paid Media: '' o null limpia el valor; un campo ausente
+    // (undefined) no se toca.
+    const parseTarget = (v: unknown): number | null | undefined => {
+      if (v === undefined) return undefined
+      if (v === null || v === '') return null
+      const n = Number(v)
+      return Number.isFinite(n) ? n : undefined
+    }
+    const targetFields: Array<[unknown, string]> = [
+      [cplTarget, 'cpl_target'],
+      [leadsTargetMonthly, 'leads_target_monthly'],
+      [roasTarget, 'roas_target'],
+      [revenueTargetMonthly, 'revenue_target_monthly'],
+    ]
+    for (const [value, column] of targetFields) {
+      const parsed = parseTarget(value)
+      if (parsed !== undefined) updates[column] = parsed
     }
     if (typeof password === 'string' && password.trim()) {
       updates.access_password_hash = hashPassword(password.trim())
