@@ -158,6 +158,8 @@ const checkAuthMethod = ifElse({
     name: '¿Método de conexión?',
     parameters: {
       conditions: {
+        options: { caseSensitive: true, typeValidation: 'strict' },
+        combinator: 'and',
         conditions: [
           {
             leftValue: expr('{{ $json.auth_method }}'),
