@@ -329,22 +329,60 @@ export function computeFunnel(
   }
 }
 
-/** Punto del scatter de eficiencia vs volumen por campaña (x = resultado,
- * y = coste por resultado o ROAS, z = tamaño de burbuja = inversión). */
-export interface ScatterPoint {
+/** Fila diaria de una campaña (inversión/conversiones/ingresos), la unidad
+ * que llega de /api/paid para construir el gráfico "Eficiencia por
+ * campaña" — antes un scatter estático, ahora una línea por campaña. */
+export interface CampaignDailyPoint {
+  date: string
+  platform: Extract<Platform, 'Meta Ads' | 'Google Ads' | 'TikTok Ads'>
   name: string
-  x: number
-  y: number
-  z: number
+  inversion: number
+  conversiones: number
+  ingresos: number
 }
 
-export function computeScatterPoints(rows: Campaign[], businessType: BusinessType): ScatterPoint[] {
-  return rows.map((r) => ({
-    name: r.name,
-    x: businessType === 'ecommerce' ? round2(r.roas * r.inversion) : r.conversiones,
-    y: businessType === 'ecommerce' ? r.roas : r.conversiones ? round2(r.inversion / r.conversiones) : 0,
-    z: r.inversion,
-  }))
+/** Fila pivotada para el gráfico de líneas: una columna por campaña con su
+ * CPL/ROAS de ese día. */
+export type CampaignEfficiencyRow = { date: string } & Record<string, number | string>
+
+const MAX_CAMPAIGN_LINES = 8
+
+/** Pivota la serie diaria por campaña (ya filtrada a la plataforma activa)
+ * en filas {date, [campaña]: eficiencia}, como mucho las MAX_CAMPAIGN_LINES
+ * campañas con más inversión en el rango — para que el gráfico siga siendo
+ * legible. `omitted` indica cuántas campañas se dejaron fuera. */
+export function computeCampaignEfficiencySeries(
+  rows: CampaignDailyPoint[],
+  businessType: BusinessType,
+): { data: CampaignEfficiencyRow[]; campaigns: string[]; omitted: number } {
+  if (rows.length === 0) return { data: [], campaigns: [], omitted: 0 }
+
+  const totalInversionByName = new Map<string, number>()
+  for (const r of rows) {
+    totalInversionByName.set(r.name, (totalInversionByName.get(r.name) ?? 0) + r.inversion)
+  }
+  const allCampaigns = Array.from(totalInversionByName.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([name]) => name)
+  const campaigns = allCampaigns.slice(0, MAX_CAMPAIGN_LINES)
+  const campaignSet = new Set(campaigns)
+
+  const byDate = new Map<string, CampaignEfficiencyRow>()
+  for (const r of rows) {
+    if (!campaignSet.has(r.name)) continue
+    const row = byDate.get(r.date) ?? { date: r.date }
+    row[r.name] =
+      businessType === 'ecommerce'
+        ? r.inversion
+          ? round2(r.ingresos / r.inversion)
+          : 0
+        : r.conversiones
+          ? round2(r.inversion / r.conversiones)
+          : 0
+    byDate.set(r.date, row)
+  }
+  const data = Array.from(byDate.values()).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
+  return { data, campaigns, omitted: allCampaigns.length - campaigns.length }
 }
 
 type PlatformShareRow = { metric: string } & Record<string, number | string>

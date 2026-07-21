@@ -9,6 +9,7 @@ import type {
   Campaign,
   InvConvPoint,
   PlatformSlice,
+  CampaignDailyPoint,
   MetaCreative,
   KpiData,
   SeoTrafficPoint,
@@ -32,6 +33,9 @@ export interface PaidData {
   /** Misma serie que `invConv` pero exclusiva de cada plataforma, para que
    * las pestañas de plataforma no mezclen inversión/conversiones de otras. */
   invConvByPlatform: Record<string, InvConvPoint[]>
+  /** Serie diaria por campaña (inversión/conversiones/ingresos), para el
+   * gráfico "Eficiencia por campaña" — una línea por campaña. */
+  campaignDaily: CampaignDailyPoint[]
   /** Insights a nivel de anuncio de Meta Ads (tabla "Creatividades") —
    * vacío si Meta Ads no está conectado o aún no hay filas para el cliente. */
   metaCreatives: MetaCreative[]
