@@ -54,6 +54,13 @@ const SYNC_WEBHOOKS: Record<string, string | undefined> = {
   youtube: process.env.N8N_YOUTUBE_SYNC_WEBHOOK_URL,
 }
 
+/** Webhooks adicionales que se disparan junto al de su plataforma (mismo
+ * botón "Sincronizar ahora"), sin bloquear la respuesta si fallan. Meta Ads
+ * trae, además de las campañas, las creatividades a nivel de anuncio. */
+const EXTRA_SYNC_WEBHOOKS: Record<string, string | undefined> = {
+  'meta-ads': process.env.N8N_META_CREATIVES_SYNC_WEBHOOK_URL,
+}
+
 export default async function handler(req: any, res: any) {
   try {
     await handleRequest(req, res)
@@ -133,6 +140,19 @@ async function handleRequest(req: any, res: any) {
       res.status(502).json({ error: `n8n respondió ${triggerResp.status} al iniciar la sincronización.` })
       return
     }
+
+    // Best-effort: si esta plataforma tiene un webhook adicional (p. ej.
+    // creatividades de Meta Ads), se dispara también, sin bloquear la
+    // respuesta si falla o no está configurado.
+    const extraWebhookUrl = EXTRA_SYNC_WEBHOOKS[platform]
+    if (extraWebhookUrl) {
+      fetch(extraWebhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId: client.id, customerId: accountId, adAccountId: accountId }),
+      }).catch(() => {})
+    }
+
     res.status(200).json({ ok: true })
   } catch {
     res.status(502).json({ error: 'No se pudo contactar con n8n para iniciar la sincronización.' })
