@@ -430,6 +430,11 @@ function ConnectionCard({
             {LoginIcon && <LoginIcon className="h-4 w-4" />}
             {conn.authMethod === 'oauth' ? `Reconectar con ${conn.loginProvider}` : `Conectar con ${conn.loginProvider}`}
           </button>
+          {conn.loginProvider === 'Facebook' && (
+            <p className="mt-2 text-xs text-negative">
+              Pendiente de aprobación por Meta: el inicio de sesión con Facebook solo funcionará para cuentas propias del equipo hasta que Meta apruebe los permisos ampliados (App Review).
+            </p>
+          )}
         </div>
       )}
 
