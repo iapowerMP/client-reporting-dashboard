@@ -7,11 +7,13 @@ import PaidMedia from './pages/PaidMedia'
 import Seo from './pages/Seo'
 import Social from './pages/Social'
 import Settings from './pages/Settings'
+import PrivacyPolicy from './pages/PrivacyPolicy'
 
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<ClientPicker />} />
+      <Route path="/politica-privacidad" element={<PrivacyPolicy />} />
       <Route path="/admin" element={<Admin />} />
       <Route path="/c/:clientSlug" element={<ClientLayout />}>
         <Route index element={<Overview />} />
