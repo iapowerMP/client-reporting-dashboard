@@ -545,7 +545,22 @@ export default function Settings() {
     const url = new URL(OAUTH_CONFIG[platform].startUrl, window.location.origin)
     url.searchParams.set('client', clientSlug)
     if (token) url.searchParams.set('token', token)
-    window.location.href = url.toString()
+
+    // Se abre en una ventana aparte para no perder la pestaña del informe;
+    // al cerrarse (tras completar o cancelar el login) se refresca el estado
+    // de las conexiones. Si el navegador bloquea el popup, se cae de vuelta
+    // a la redirección en la misma pestaña.
+    const popup = window.open(url.toString(), 'mp_oauth_popup', 'width=560,height=720')
+    if (!popup) {
+      window.location.href = url.toString()
+      return
+    }
+    const timer = window.setInterval(() => {
+      if (popup.closed) {
+        window.clearInterval(timer)
+        loadSources()
+      }
+    }, 800)
   }
 
   // Servicio (?service= de cada endpoint) -> plataforma del frontend.
@@ -594,6 +609,12 @@ export default function Settings() {
   }, [activeOauthPlatform])
 
   const closeOauthPicker = () => {
+    // Si esta pestaña es el popup abierto desde el informe, se cierra sola
+    // en vez de quedarse mostrando el selector de cuentas vacío.
+    if (window.opener) {
+      window.close()
+      return
+    }
     const next = new URLSearchParams(searchParams)
     next.delete('facebook_oauth')
     next.delete('google_oauth')
@@ -621,9 +642,16 @@ export default function Settings() {
       })
       const body = await resp.json().catch(() => ({}))
       if (!resp.ok) throw new Error(body?.error)
-      closeOauthPicker()
-      await loadSources()
-      showToast(`Conectado con inicio de sesión de ${cfg.providerLabel}`)
+      if (window.opener) {
+        // Deja ver el mensaje de éxito un instante antes de cerrar el popup;
+        // la pestaña del informe detecta el cierre y refresca sola.
+        showToast(`Conectado con inicio de sesión de ${cfg.providerLabel}`)
+        window.setTimeout(() => window.close(), 1200)
+      } else {
+        closeOauthPicker()
+        await loadSources()
+        showToast(`Conectado con inicio de sesión de ${cfg.providerLabel}`)
+      }
     } catch (e) {
       setOauthAccountsError(e instanceof Error && e.message ? e.message : 'No se pudo completar la conexión.')
     } finally {
