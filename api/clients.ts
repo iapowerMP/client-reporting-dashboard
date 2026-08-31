@@ -74,7 +74,7 @@ async function handleRequest(req: any, res: any) {
 
     if (slug) {
       try {
-        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type,cpl_target,leads_target_monthly,roas_target,revenue_target_monthly`
+        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type,cpl_target,leads_target_monthly,roas_target,revenue_target_monthly,report_template`
         const resp = await fetch(url, { headers })
         if (!resp.ok) {
           res.status(502).json({ error: `Supabase respondió ${resp.status} al leer clients.` })

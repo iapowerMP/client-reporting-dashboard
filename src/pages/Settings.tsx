@@ -934,35 +934,47 @@ export default function Settings() {
         </div>
       </ChartCard>
 
-      {/* Conexiones */}
-      <div>
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-white">Conexiones</h2>
-        </div>
+      {/* Conexiones — no aplica a informes especiales (datos importados a
+          mano, sin sincronización con las plataformas habituales). */}
+      {clientData?.reportTemplate === 'programmatic' ? (
+        <ChartCard title="Conexiones">
+          <p className="py-2 text-sm text-text-secondary">
+            Este es un informe especial de publicidad programática: sus datos se importan manualmente
+            desde el DSP y no dependen de las conexiones habituales (Meta Ads, Google Ads, GA4...).
+          </p>
+        </ChartCard>
+      ) : (
+        <>
+          <div>
+            <div className="mb-4">
+              <h2 className="text-lg font-semibold text-white">Conexiones</h2>
+            </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {realConnections.map((conn) => (
-            <ConnectionCard
-              key={conn.id}
-              conn={conn}
-              visible={isVisible(conn.id)}
-              onToggleVisible={(v) => setVisible(conn.id, v)}
-              saving={savingIds.includes(conn.id)}
-              onSaveExternalId={(value) => handleSaveExternalId(conn.id, value)}
-              syncing={syncingIds.includes(conn.id)}
-              onSync={() => handleSync(conn.id)}
-              onConnectOauth={() => handleConnectOauth(OAUTH_PLATFORM_BY_CONNECTION[conn.id])}
-            />
-          ))}
-        </div>
-      </div>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {realConnections.map((conn) => (
+                <ConnectionCard
+                  key={conn.id}
+                  conn={conn}
+                  visible={isVisible(conn.id)}
+                  onToggleVisible={(v) => setVisible(conn.id, v)}
+                  saving={savingIds.includes(conn.id)}
+                  onSaveExternalId={(value) => handleSaveExternalId(conn.id, value)}
+                  syncing={syncingIds.includes(conn.id)}
+                  onSync={() => handleSync(conn.id)}
+                  onConnectOauth={() => handleConnectOauth(OAUTH_PLATFORM_BY_CONNECTION[conn.id])}
+                />
+              ))}
+            </div>
+          </div>
 
-      {/* Log de sincronizaciones */}
-      <ChartCard title="Historial de sincronizaciones">
-        <p className="py-4 text-center text-sm text-text-secondary">
-          El historial detallado de sincronizaciones estará disponible próximamente.
-        </p>
-      </ChartCard>
+          {/* Log de sincronizaciones */}
+          <ChartCard title="Historial de sincronizaciones">
+            <p className="py-4 text-center text-sm text-text-secondary">
+              El historial detallado de sincronizaciones estará disponible próximamente.
+            </p>
+          </ChartCard>
+        </>
+      )}
 
       {toast && <Toast message={toast} />}
 

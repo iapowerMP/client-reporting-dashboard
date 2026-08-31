@@ -4,7 +4,7 @@
  * las credenciales del cliente. Los secretos viven en el servidor, nunca en
  * el navegador.
  */
-import type { DataProvider, DateRange, OverviewData, PaidData, SeoData, SocialData } from './types'
+import type { DataProvider, DateRange, OverviewData, PaidData, ProgrammaticData, SeoData, SocialData } from './types'
 import { authHeaders, clearToken } from '@/lib/authToken'
 
 async function fetchJson<T>(endpoint: string, client: string, range?: DateRange): Promise<T> {
@@ -47,6 +47,7 @@ async function fetchJson<T>(endpoint: string, client: string, range?: DateRange)
 export const liveProvider: DataProvider = {
   getOverview: (client, range) => fetchJson<OverviewData>('/api/overview', client, range),
   getPaid: (client, range) => fetchJson<PaidData>('/api/paid', client, range),
+  getProgrammatic: (client, range) => fetchJson<ProgrammaticData>('/api/programmatic', client, range),
   getSeo: (client, range) => fetchJson<SeoData>('/api/seo', client, range),
   getSocial: (client, range) => fetchJson<SocialData>('/api/social', client, range),
 }

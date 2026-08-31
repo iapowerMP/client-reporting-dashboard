@@ -5,6 +5,7 @@ import {
   Search,
   Smartphone,
   Settings,
+  Radar,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -34,17 +35,24 @@ const NAV_ITEMS: NavItem[] = [
   { suffix: '/social', label: 'Redes Sociales', icon: Smartphone, category: 'social' },
 ]
 
+/** Informes especiales (report_template = 'programmatic'): un único apartado,
+ * sin las secciones ni fuentes de datos habituales. */
+const PROGRAMMATIC_NAV_ITEMS: NavItem[] = [
+  { suffix: '/programatica', label: 'Publicidad Programática', icon: Radar },
+]
+
 interface SidebarProps {
   clientSlug: string
   /** Nombre real del cliente (tabla `clients`); mientras carga, se usa el slug. */
   clientName?: string
   logoUrl?: string | null
+  reportTemplate?: 'standard' | 'programmatic'
   /** Estado del overlay en móvil. */
   open: boolean
   onClose: () => void
 }
 
-export default function Sidebar({ clientSlug, clientName, logoUrl, open, onClose }: SidebarProps) {
+export default function Sidebar({ clientSlug, clientName, logoUrl, reportTemplate = 'standard', open, onClose }: SidebarProps) {
   const base = `/c/${clientSlug}`
   const displayName = clientName || clientSlug.replace(/-/g, ' ')
   const { isVisible } = useReportConfig()
@@ -54,9 +62,10 @@ export default function Sidebar({ clientSlug, clientName, logoUrl, open, onClose
     seo: Object.values(SEO_TAB_TO_CONNECTION).some(isVisible),
     social: Object.values(SOCIAL_TAB_TO_CONNECTION).some(isVisible),
   }
-  const navItems = NAV_ITEMS.filter(
-    (item) => !item.category || categoryHasSource[item.category],
-  )
+  const navItems =
+    reportTemplate === 'programmatic'
+      ? PROGRAMMATIC_NAV_ITEMS
+      : NAV_ITEMS.filter((item) => !item.category || categoryHasSource[item.category])
 
   return (
     <>

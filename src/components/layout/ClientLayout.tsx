@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Navigate, Outlet, useParams } from 'react-router-dom'
+import { Navigate, Outlet, useLocation, useParams } from 'react-router-dom'
 import Layout from './Layout'
 import { ReportConfigProvider } from '@/lib/reportConfig'
 import { DateRangeProvider } from '@/lib/dateRange'
@@ -16,6 +16,7 @@ import { Loading } from '@/components/shared/AsyncState'
  * introduce correctamente (PasswordGate). */
 export default function ClientLayout() {
   const { clientSlug } = useParams<{ clientSlug: string }>()
+  const { pathname } = useLocation()
   const clientInfo = useClientInfo(clientSlug ?? '')
   const [unlocked, setUnlocked] = useState(
     () => (clientSlug ? !!getStoredToken(clientSlug) : false),
@@ -38,6 +39,14 @@ export default function ClientLayout() {
     )
   }
 
+  // Informes especiales (report_template = 'programmatic'): las secciones
+  // habituales (Overview/Paid/SEO/Social) no aplican, solo Configuración.
+  const reportTemplate = clientInfo.data?.reportTemplate ?? 'standard'
+  const suffix = pathname.replace(`/c/${clientSlug}`, '')
+  if (reportTemplate === 'programmatic' && suffix !== '/programatica' && suffix !== '/settings') {
+    return <Navigate to={`/c/${clientSlug}/programatica`} replace />
+  }
+
   return (
     <ReportConfigProvider key={clientSlug} clientSlug={clientSlug}>
       <DateRangeProvider key={clientSlug}>
@@ -45,6 +54,7 @@ export default function ClientLayout() {
           clientSlug={clientSlug}
           clientName={clientInfo.data?.name}
           logoUrl={clientInfo.data?.logoUrl}
+          reportTemplate={reportTemplate}
         >
           <Outlet context={clientInfo} />
         </Layout>
