@@ -7,11 +7,19 @@
 import type { DataProvider, DateRange, OverviewData, PaidData, ProgrammaticData, SeoData, SocialData } from './types'
 import { authHeaders, clearToken } from '@/lib/authToken'
 
-async function fetchJson<T>(endpoint: string, client: string, range?: DateRange): Promise<T> {
+async function fetchJson<T>(
+  endpoint: string,
+  client: string,
+  range?: DateRange,
+  extraParams?: Record<string, string>,
+): Promise<T> {
   const params = new URLSearchParams({ client })
   if (range) {
     params.set('from', range.from)
     params.set('to', range.to)
+  }
+  if (extraParams) {
+    for (const [key, value] of Object.entries(extraParams)) params.set(key, value)
   }
   const url = `${endpoint}?${params.toString()}`
   let res: Response
@@ -47,7 +55,11 @@ async function fetchJson<T>(endpoint: string, client: string, range?: DateRange)
 export const liveProvider: DataProvider = {
   getOverview: (client, range) => fetchJson<OverviewData>('/api/overview', client, range),
   getPaid: (client, range) => fetchJson<PaidData>('/api/paid', client, range),
-  getProgrammatic: (client, range) => fetchJson<ProgrammaticData>('/api/programmatic', client, range),
+  // Vive en /api/paid (con ?mode=programmatic) en vez de en un endpoint
+  // propio, para no superar el límite de Serverless Functions del plan de
+  // Vercel (12) — ver comentario al inicio de api/paid.ts.
+  getProgrammatic: (client, range) =>
+    fetchJson<ProgrammaticData>('/api/paid', client, range, { mode: 'programmatic' }),
   getSeo: (client, range) => fetchJson<SeoData>('/api/seo', client, range),
   getSocial: (client, range) => fetchJson<SocialData>('/api/social', client, range),
 }
