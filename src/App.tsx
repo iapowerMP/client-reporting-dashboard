@@ -4,6 +4,7 @@ import ClientPicker from './pages/ClientPicker'
 import Admin from './pages/Admin'
 import Overview from './pages/Overview'
 import PaidMedia from './pages/PaidMedia'
+import Programmatic from './pages/Programmatic'
 import Seo from './pages/Seo'
 import Social from './pages/Social'
 import Settings from './pages/Settings'
@@ -18,6 +19,7 @@ export default function App() {
       <Route path="/c/:clientSlug" element={<ClientLayout />}>
         <Route index element={<Overview />} />
         <Route path="paid" element={<PaidMedia />} />
+        <Route path="programatica" element={<Programmatic />} />
         <Route path="seo" element={<Seo />} />
         <Route path="social" element={<Social />} />
         <Route path="settings" element={<Settings />} />

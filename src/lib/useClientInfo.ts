@@ -21,6 +21,10 @@ export interface ClientInfo {
   leadsTargetMonthly: number | null
   roasTarget: number | null
   revenueTargetMonthly: number | null
+  /** 'standard' (por defecto) usa Overview/Paid/SEO/Social con las fuentes
+   * conectadas normales; 'programmatic' sustituye todo el informe por el
+   * apartado de publicidad programática (datos importados manualmente). */
+  reportTemplate: 'standard' | 'programmatic'
 }
 
 interface ClientInfoState {
@@ -60,6 +64,7 @@ export function useClientInfo(clientSlug: string) {
           leadsTargetMonthly: typeof row.leads_target_monthly === 'number' ? row.leads_target_monthly : null,
           roasTarget: typeof row.roas_target === 'number' ? row.roas_target : null,
           revenueTargetMonthly: typeof row.revenue_target_monthly === 'number' ? row.revenue_target_monthly : null,
+          reportTemplate: row.report_template === 'programmatic' ? 'programmatic' : 'standard',
         },
         loading: false,
         error: null,

@@ -7,6 +7,7 @@ import TopBar from './TopBar'
 const ROUTE_TITLES: Record<string, string> = {
   '': 'Overview',
   '/paid': 'Paid Media',
+  '/programatica': 'Publicidad Programática',
   '/seo': 'SEO',
   '/social': 'Redes Sociales',
   '/settings': 'Configuración',
@@ -17,11 +18,13 @@ export default function Layout({
   clientSlug,
   clientName,
   logoUrl,
+  reportTemplate = 'standard',
 }: {
   children: ReactNode
   clientSlug: string
   clientName?: string
   logoUrl?: string | null
+  reportTemplate?: 'standard' | 'programmatic'
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { pathname } = useLocation()
@@ -34,6 +37,7 @@ export default function Layout({
         clientSlug={clientSlug}
         clientName={clientName}
         logoUrl={logoUrl}
+        reportTemplate={reportTemplate}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />

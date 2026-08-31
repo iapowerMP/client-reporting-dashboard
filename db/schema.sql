@@ -293,6 +293,42 @@ create index if not exists idx_youtube_daily_client_date
 -- ----------------------------------------------------------------------------
 --  Registro de sincronizaciones (alimenta "Historial de sincronizaciones").
 -- ----------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
+--  Informes especiales: plantilla de informe por cliente. 'standard' (por
+--  defecto) usa las secciones habituales (Overview/Paid/SEO/Social) con las
+--  fuentes conectadas normales; 'programmatic' las sustituye por un único
+--  apartado de publicidad programática, alimentado por importación manual de
+--  datos del DSP (sin conexión API en vivo ni sincronización automática).
+-- ----------------------------------------------------------------------------
+alter table clients add column if not exists report_template text not null default 'standard';
+
+-- ----------------------------------------------------------------------------
+--  Publicidad programática (Oniad u otro DSP) — importación manual desde
+--  Excel. Una fila por día+campaña+sitio+creatividad, tal cual la exporta el
+--  DSP (impressions/visible_impressions/clicks/cost/viewability/reach/
+--  frequency); CTR/CPM/CPC se derivan en /api/programmatic, no se guardan.
+-- ----------------------------------------------------------------------------
+create table if not exists programmatic_daily (
+  id                   bigint generated always as identity primary key,
+  client_id            uuid not null references clients(id) on delete cascade,
+  date                 date not null,
+  campaign_name        text not null,
+  medium               text not null,   -- sitio/editor donde se mostró el anuncio
+  banner               text not null,   -- nombre de archivo de la creatividad
+  impressions          bigint not null default 0,
+  visible_impressions  bigint not null default 0,
+  clicks               bigint not null default 0,
+  cost                 numeric(14,4) not null default 0,
+  viewability          numeric(6,2),    -- % visible (null si el DSP no lo midió esa fila)
+  reach                bigint not null default 0,
+  frequency            numeric(6,2),
+  updated_at           timestamptz not null default now(),
+  unique (client_id, date, campaign_name, medium, banner)
+);
+
+create index if not exists idx_programmatic_daily_client_date
+  on programmatic_daily (client_id, date);
+
 create table if not exists sync_logs (
   id          bigint generated always as identity primary key,
   client_id   uuid not null references clients(id) on delete cascade,

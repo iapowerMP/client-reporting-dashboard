@@ -442,6 +442,62 @@ export interface MetaCreative {
 }
 
 /* ========================================================================== */
+/*  VISTA 2b · PUBLICIDAD PROGRAMÁTICA (informes especiales)                   */
+/*  Solo para clientes con report_template = 'programmatic': sustituye todo   */
+/*  el informe habitual por este único apartado, alimentado por una           */
+/*  importación manual de datos del DSP (no hay conexión API en vivo).        */
+/* ========================================================================== */
+
+export interface ProgrammaticMetrics {
+  impresiones: number
+  clics: number
+  coste: number
+  ctr: number
+  cpm: number
+  cpc: number
+}
+
+export interface ProgrammaticSummary extends ProgrammaticMetrics {
+  visibleImpressions: number
+  viewability: number
+  reach: number
+  frequency: number
+}
+
+export interface ProgrammaticDailyPoint extends ProgrammaticMetrics {
+  date: string
+}
+
+export interface ProgrammaticCampaignRow extends ProgrammaticMetrics {
+  name: string
+}
+
+export interface ProgrammaticMediumRow extends ProgrammaticMetrics {
+  medium: string
+}
+
+export interface ProgrammaticCreativeRow extends ProgrammaticMetrics {
+  banner: string
+  size: string | null
+}
+
+/** KPIs de cabecera del informe de publicidad programática. */
+export function computeProgrammaticKpis(summary: ProgrammaticSummary): KpiData[] {
+  return [
+    { label: 'Impresiones', value: formatNumber(summary.impresiones) },
+    { label: 'Impresiones visibles', value: formatNumber(summary.visibleImpressions) },
+    { label: 'Clics', value: formatNumber(summary.clics) },
+    { label: 'CTR', value: formatPercent(summary.ctr) },
+    { label: 'Coste', value: formatCurrency(summary.coste, 2) },
+    { label: 'CPM', value: formatCurrency(summary.cpm, 2) },
+    { label: 'CPC', value: formatCurrency(summary.cpc, 3) },
+    { label: 'Viewability', value: formatPercent(summary.viewability) },
+    { label: 'Alcance', value: formatNumber(summary.reach) },
+    { label: 'Frecuencia', value: summary.frequency.toFixed(2) },
+  ]
+}
+
+/* ========================================================================== */
 /*  VISTA 3 · SEO                                                              */
 /* ========================================================================== */
 

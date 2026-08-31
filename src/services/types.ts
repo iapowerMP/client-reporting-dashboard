@@ -11,6 +11,11 @@ import type {
   PlatformSlice,
   CampaignDailyPoint,
   MetaCreative,
+  ProgrammaticSummary,
+  ProgrammaticDailyPoint,
+  ProgrammaticCampaignRow,
+  ProgrammaticMediumRow,
+  ProgrammaticCreativeRow,
   KpiData,
   SeoTrafficPoint,
   ChannelBar,
@@ -42,6 +47,19 @@ export interface PaidData {
   /** ID numérico (sin "act_") de la cuenta de Meta Ads, para enlazar cada
    * creatividad a Ads Manager — null si Meta Ads no está conectado. */
   metaAdAccountId: string | null
+}
+
+/** Informe especial de publicidad programática (report_template =
+ * 'programmatic'), alimentado por importación manual de datos del DSP. */
+export interface ProgrammaticData {
+  summary: ProgrammaticSummary
+  daily: ProgrammaticDailyPoint[]
+  campaigns: ProgrammaticCampaignRow[]
+  /** Los sitios/editores con más impresiones (top 30); `mediumsOmitted` indica
+   * cuántos se dejaron fuera. */
+  mediums: ProgrammaticMediumRow[]
+  mediumsOmitted: number
+  creatives: ProgrammaticCreativeRow[]
 }
 
 export interface SeoData {
@@ -79,6 +97,7 @@ export interface DateRange {
 export interface DataProvider {
   getOverview(client: string, range: DateRange): Promise<OverviewData>
   getPaid(client: string, range: DateRange): Promise<PaidData>
+  getProgrammatic(client: string, range: DateRange): Promise<ProgrammaticData>
   getSeo(client: string, range: DateRange): Promise<SeoData>
   getSocial(client: string, range: DateRange): Promise<SocialData>
 }
