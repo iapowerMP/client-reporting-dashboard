@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -9,6 +10,7 @@ import {
   Tooltip,
   Legend,
 } from 'recharts'
+import { ImageOff, X } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import ChartTooltip from '@/components/shared/ChartTooltip'
 import KpiCard from '@/components/shared/KpiCard'
@@ -26,6 +28,24 @@ function campaignTypeLabel(name: string): string | null {
   if (/^PRS[_-]/i.test(name)) return 'Prospección'
   if (/^RTG[_-]/i.test(name)) return 'Retargeting'
   return null
+}
+
+/** Plantillas de creatividad del kit de Oniad (public/creatives/oniad/),
+ * una por formato IAB — no dependen del cliente ni de la campaña, son los
+ * mismos 8 tamaños que Oniad entrega para publicidad programática. */
+const CREATIVE_PREVIEW_SIZES = new Set([
+  '160x600',
+  '300x250',
+  '300x600',
+  '320x50',
+  '320x100',
+  '320x480',
+  '728x90',
+  '970x250',
+])
+
+function creativePreviewUrl(size: string | null): string | null {
+  return size && CREATIVE_PREVIEW_SIZES.has(size) ? `/creatives/oniad/${size}.gif` : null
 }
 
 const campaignColumns: Column<ProgrammaticCampaignRow>[] = [
@@ -59,19 +79,39 @@ const mediumColumns: Column<ProgrammaticMediumRow>[] = [
   { key: 'cpm', header: 'CPM', align: 'right', sortable: true, render: (r) => formatCurrency(r.cpm, 2) },
 ]
 
-const creativeColumns: Column<ProgrammaticCreativeRow>[] = [
-  { key: 'size', header: 'Formato', sortable: true, render: (r) => r.size ?? '—' },
-  {
-    key: 'banner',
-    header: 'Creatividad',
-    sortable: true,
-    render: (r) => <span className="break-all text-xs text-text-secondary">{r.banner}</span>,
-  },
-  { key: 'impresiones', header: 'Impresiones', align: 'right', sortable: true, render: (r) => formatNumber(r.impresiones) },
-  { key: 'clics', header: 'Clics', align: 'right', sortable: true, render: (r) => formatNumber(r.clics) },
-  { key: 'ctr', header: 'CTR', align: 'right', sortable: true, render: (r) => formatPercent(r.ctr) },
-  { key: 'coste', header: 'Coste', align: 'right', sortable: true, render: (r) => formatCurrency(r.coste, 2) },
-]
+function getCreativeColumns(onPreview: (creative: ProgrammaticCreativeRow) => void): Column<ProgrammaticCreativeRow>[] {
+  return [
+    { key: 'size', header: 'Formato', sortable: true, render: (r) => r.size ?? '—' },
+    {
+      key: 'banner',
+      header: 'Creatividad',
+      sortable: true,
+      render: (r) => {
+        const preview = creativePreviewUrl(r.size)
+        return preview ? (
+          <button
+            onClick={() => onPreview(r)}
+            className="block h-10 w-16 overflow-hidden rounded-control border border-border bg-base transition-opacity hover:opacity-80"
+            title="Previsualizar creatividad"
+          >
+            <img src={preview} alt={r.size ?? r.banner} className="h-full w-full object-contain" />
+          </button>
+        ) : (
+          <div
+            className="flex h-10 w-16 items-center justify-center rounded-control border border-border bg-base text-text-secondary"
+            title={r.banner}
+          >
+            <ImageOff className="h-4 w-4" />
+          </div>
+        )
+      },
+    },
+    { key: 'impresiones', header: 'Impresiones', align: 'right', sortable: true, render: (r) => formatNumber(r.impresiones) },
+    { key: 'clics', header: 'Clics', align: 'right', sortable: true, render: (r) => formatNumber(r.clics) },
+    { key: 'ctr', header: 'CTR', align: 'right', sortable: true, render: (r) => formatPercent(r.ctr) },
+    { key: 'coste', header: 'Coste', align: 'right', sortable: true, render: (r) => formatCurrency(r.coste, 2) },
+  ]
+}
 
 export default function Programmatic() {
   const { clientSlug = '' } = useParams()
@@ -80,11 +120,13 @@ export default function Programmatic() {
     () => getProvider().getProgrammatic(clientSlug, range),
     [clientSlug, range.from, range.to],
   )
+  const [previewCreative, setPreviewCreative] = useState<ProgrammaticCreativeRow | null>(null)
 
   if (loading) return <Loading />
   if (error || !data) return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
 
   const kpis = computeProgrammaticKpis(data.summary)
+  const creativeColumns = getCreativeColumns(setPreviewCreative)
 
   return (
     <div className="space-y-6">
@@ -154,6 +196,38 @@ export default function Programmatic() {
       <ChartCard title="Creatividades">
         <DataTable columns={creativeColumns} data={data.creatives} rowKey={(r) => r.banner} />
       </ChartCard>
+
+      {previewCreative && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setPreviewCreative(null)}
+        >
+          <div
+            className="max-w-sm rounded-card border border-border bg-card p-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-white">{previewCreative.size ?? 'Creatividad'}</p>
+                <p className="break-all text-xs text-text-secondary">{previewCreative.banner}</p>
+              </div>
+              <button
+                onClick={() => setPreviewCreative(null)}
+                className="rounded-control p-1 text-text-secondary hover:bg-white/5 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {creativePreviewUrl(previewCreative.size) && (
+              <img
+                src={creativePreviewUrl(previewCreative.size)!}
+                alt={previewCreative.size ?? previewCreative.banner}
+                className="w-full rounded-control bg-base"
+              />
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
