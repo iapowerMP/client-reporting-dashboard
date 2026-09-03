@@ -230,6 +230,7 @@ const transform = node({
       jsCode: `const clientId = $('Buscar pagina y token').item.json.client_id;
 const pageId = $('Buscar pagina y token').item.json.page_id;
 const followers = ($('Seguidores de la pagina').item.json || {}).fan_count || 0;
+const untilDate = $('Calcular rango de fechas').item.json.until;
 const resp = $json || {};
 const metrics = resp.data || [];
 const esc = (v) => "'" + String(v).replace(/'/g, "''") + "'";
@@ -245,10 +246,13 @@ for (const m of metrics) {
     byDate.set(date, cur);
   }
 }
-const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'facebook';";
+// Si Insights falla (metric deprecada) o no trae datos, se guarda igualmente
+// una fila con los seguidores actuales del día de hoy: mejor un snapshot de
+// seguidores real que no guardar nada por culpa de un fallo en otro dato.
 if (byDate.size === 0) {
-  return { json: { query: touchDataSource, rowCount: 0 } };
+  byDate.set(untilDate, { impressions: 0, engaged_users: 0 });
 }
+const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'facebook';";
 const values = Array.from(byDate.entries()).map(([date, v]) =>
   '(' + esc(clientId) + '::uuid, ' + esc(pageId) + ', ' + esc(date) + '::date, ' + followers + ', ' + v.impressions + ', ' + v.engaged_users + ')'
 ).join(',');
