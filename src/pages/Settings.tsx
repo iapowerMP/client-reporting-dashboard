@@ -229,6 +229,10 @@ function OauthAccountPicker({
   confirming,
   onConfirm,
   onCancel,
+  allowManualId,
+  manualId,
+  onManualIdChange,
+  onConfirmManualId,
 }: {
   platformLabel: string
   loading: boolean
@@ -240,6 +244,10 @@ function OauthAccountPicker({
   confirming: boolean
   onConfirm: () => void
   onCancel: () => void
+  allowManualId?: boolean
+  manualId?: string
+  onManualIdChange?: (id: string) => void
+  onConfirmManualId?: () => void
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -279,6 +287,31 @@ function OauthAccountPicker({
               </label>
             ))}
         </div>
+
+        {allowManualId && (
+          <div className="mt-4 border-t border-border pt-3">
+            <p className="text-xs text-text-secondary">
+              ¿No aparece tu página aunque la administras? Facebook a veces omite la página principal de un Business
+              Manager en este listado — conéctala directamente escribiendo su ID.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <input
+                type="text"
+                value={manualId ?? ''}
+                onChange={(e) => onManualIdChange?.(e.target.value)}
+                placeholder="ID de la página"
+                className="w-full rounded-control border border-border bg-base px-3 py-1.5 text-sm text-text-primary"
+              />
+              <button
+                onClick={onConfirmManualId}
+                disabled={!manualId?.trim() || confirming}
+                className="shrink-0 rounded-control border border-border bg-base px-3 py-1.5 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
+              >
+                {confirming ? 'Conectando...' : 'Conectar por ID'}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="mt-5 flex justify-end gap-2">
           <button
@@ -627,12 +660,12 @@ export default function Settings() {
     setOauthAccountsError(null)
     setOauthDiagnostic(null)
     setSelectedOauthAccount('')
+    setManualPageId('')
   }
 
-  const handleConfirmOauthAccount = async () => {
-    if (!activeOauthPlatform || !selectedOauthAccount) return
+  const finalizeOauthAccount = async (accountId: string, pageId?: string) => {
+    if (!activeOauthPlatform) return
     const cfg = OAUTH_CONFIG[activeOauthPlatform]
-    const account = oauthAccounts?.find((a) => a.id === selectedOauthAccount)
     setFinalizingOauth(true)
     try {
       const resp = await fetch(cfg.finalizeUrl, {
@@ -640,9 +673,9 @@ export default function Settings() {
         headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
         body: JSON.stringify({
           client: clientSlug,
-          [cfg.finalizeField]: selectedOauthAccount,
+          [cfg.finalizeField]: accountId,
           ...cfg.finalizeExtra,
-          ...(account?.pageId ? { pageId: account.pageId } : {}),
+          ...(pageId ? { pageId } : {}),
         }),
       })
       const body = await resp.json().catch(() => ({}))
@@ -662,6 +695,24 @@ export default function Settings() {
     } finally {
       setFinalizingOauth(false)
     }
+  }
+
+  const handleConfirmOauthAccount = () => {
+    if (!selectedOauthAccount) return
+    const account = oauthAccounts?.find((a) => a.id === selectedOauthAccount)
+    return finalizeOauthAccount(selectedOauthAccount, account?.pageId)
+  }
+
+  // Algunas páginas de Facebook (típicamente la página "principal" de un
+  // Business Manager) no aparecen en /me/accounts aunque la cuenta sí tenga
+  // acceso total y Facebook deje generar su token al pedirla directamente
+  // por ID — una rareza confirmada de esa API. Como alternativa al selector,
+  // se permite conectar la página escribiendo su ID a mano.
+  const [manualPageId, setManualPageId] = useState('')
+  const handleConfirmManualPageId = () => {
+    const id = manualPageId.trim()
+    if (!id) return
+    return finalizeOauthAccount(id)
   }
 
   const clientNameRef = useRef<HTMLInputElement>(null)
@@ -1007,6 +1058,10 @@ export default function Settings() {
           confirming={finalizingOauth}
           onConfirm={handleConfirmOauthAccount}
           onCancel={closeOauthPicker}
+          allowManualId={activeOauthPlatform === 'facebook'}
+          manualId={manualPageId}
+          onManualIdChange={setManualPageId}
+          onConfirmManualId={handleConfirmManualPageId}
         />
       )}
     </div>
