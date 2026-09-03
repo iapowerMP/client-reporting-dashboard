@@ -57,21 +57,25 @@ interface FacebookPage {
  * administra 106 páginas: solo llegaban las primeras ~100), así que hay que
  * seguir `paging.next` hasta agotarlo o nunca se ven las cuentas del final.
  */
-async function fetchAllFacebookPages(token: string): Promise<FacebookPage[]> {
+async function fetchAllFacebookPages(token: string): Promise<{ pages: FacebookPage[]; requests: number; lastPaging: unknown }> {
   const pages: FacebookPage[] = []
   let url: string | null = `https://graph.facebook.com/v25.0/me/accounts?${new URLSearchParams({
     fields: 'id,name,instagram_business_account{id,username}',
     limit: '100',
     access_token: token,
   }).toString()}`
+  let requests = 0
+  let lastPaging: unknown = null
   for (let i = 0; url && i < 50; i++) {
     const resp = await fetch(url)
     const body = (await resp.json()) as { data?: FacebookPage[]; paging?: { next?: string }; error?: { message: string } }
     if (!resp.ok) throw new Error(body.error?.message || `Facebook respondió ${resp.status}.`)
+    requests += 1
+    lastPaging = body.paging ?? null
     pages.push(...(body.data ?? []))
     url = body.paging?.next ?? null
   }
-  return pages
+  return { pages, requests, lastPaging }
 }
 
 function isFacebookService(value: unknown): value is FacebookService {
@@ -360,7 +364,12 @@ async function handleAccounts(req: any, res: any) {
     }
 
     // service === 'page' | 'instagram' — ambas parten de la lista de páginas.
-    const pages = await fetchAllFacebookPages(token)
+    const { pages, requests, lastPaging } = await fetchAllFacebookPages(token)
+    // Diagnóstico temporal (quitar cuando se cierre el caso de "The Media
+    // Power Agency"): cuántas peticiones hicieron falta para agotar la
+    // paginación y qué trae paging en la última, para ver si Facebook deja
+    // de mandar más páginas antes de lo esperado.
+    const debugMeta = { pagesFetched: pages.length, requests, lastPaging }
 
     // Diagnóstico: si Facebook no devuelve ninguna página pese a que la
     // cuenta sí las administra, casi siempre es porque el token no llegó a
@@ -379,13 +388,13 @@ async function handleAccounts(req: any, res: any) {
         pagesShowList?.status === 'granted'
           ? 'El permiso pages_show_list está concedido pero Facebook no devolvió ninguna página: revisa que la página tenga "acceso de Facebook" activado para esta cuenta en Business Manager (no solo acceso de tarea/empleado).'
           : `El permiso pages_show_list no quedó concedido en el inicio de sesión (estado: ${pagesShowList?.status ?? 'no solicitado'}). Vuelve a pulsar "Conectar con Facebook" y, en el diálogo de Facebook, revisa/activa manualmente las páginas en el paso de selección de páginas antes de continuar.`
-      res.status(200).json({ accounts: [], diagnostic: detail })
+      res.status(200).json({ accounts: [], diagnostic: detail, debugMeta })
       return
     }
 
     if (service === 'page') {
       const accounts = pages.map((p) => ({ id: p.id, name: p.name }))
-      res.status(200).json({ accounts })
+      res.status(200).json({ accounts, debugMeta })
       return
     }
 
@@ -397,7 +406,7 @@ async function handleAccounts(req: any, res: any) {
         name: `@${p.instagram_business_account!.username} (${p.name})`,
         pageId: p.id,
       }))
-    res.status(200).json({ accounts })
+    res.status(200).json({ accounts, debugMeta })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudieron listar las cuentas de Facebook.' })
   }

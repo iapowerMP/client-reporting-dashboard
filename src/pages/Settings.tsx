@@ -602,6 +602,9 @@ export default function Settings() {
         if (!resp.ok) throw new Error(body?.error || 'No se pudieron cargar las cuentas.')
         setOauthAccounts(body.accounts ?? [])
         setOauthDiagnostic(body.diagnostic ?? null)
+        // Diagnóstico temporal del caso de páginas de Facebook que faltan al
+        // conectar — quitar junto con debugMeta en api/oauth-facebook.ts.
+        if (body.debugMeta) console.log('[oauth-facebook debugMeta]', body.debugMeta)
       })
       .catch((e) => setOauthAccountsError(e instanceof Error ? e.message : 'No se pudieron cargar las cuentas.'))
       .finally(() => setOauthAccountsLoading(false))
