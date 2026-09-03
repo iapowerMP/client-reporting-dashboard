@@ -39,7 +39,20 @@
  *   - `conversions`/`conversions_value` usan el mismo conjunto acotado de
  *     action_types que "CRD - Meta Ads to Supabase" (compra, lead, registro
  *     completado...).
- *   - Sin paginación: suficiente para <500 anuncios por cliente.
+ *   - Sin paginación: suficiente para <500 anuncios por cliente. En la
+ *     primera sincronización, date_preset "maximum" a nivel de anuncio (con
+ *     desglose diario) puede ser una consulta demasiado pesada para Meta en
+ *     cuentas con mucho histórico — visto en la práctica como
+ *     "(#1) An unknown error occurred". Los nodos "Insights de anuncios"
+ *     tienen options.response.neverError = true para que ese fallo puntual
+ *     no bloquee el resto de clientes del batch (esa cuenta se queda sin
+ *     backfill de creatividades hasta revisarlo, pero no rompe nada más).
+ *   - Ventana de fechas: "Elegir ventana de fechas" decide date_preset
+ *     "maximum" (todo el histórico) vs. "last_30d" mirando si meta_ad_daily
+ *     ya tiene filas para el cliente — a propósito NO usa
+ *     data_sources.last_sync (que ya lo toca el otro workflow de Meta Ads a
+ *     nivel de campaña, 30 min antes) para no perder el backfill de esta
+ *     tabla el mismo día en que ese último ya se ejecutó.
  *   - El token de oauth no se refresca automáticamente (igual que en el
  *     workflow de campaña): si caduca, tocará "Reconectar con Facebook".
  *
@@ -134,6 +147,10 @@ const mergePoint = node({
   output: [{ client_id: '' }],
 })
 
+// ad_history_count (no data_sources.last_sync, que ya lo toca "CRD - Meta Ads
+// to Supabase" a nivel de campaña unos minutos antes): cuenta si esta tabla
+// (meta_ad_daily, a nivel de anuncio) ya tiene alguna fila para el cliente,
+// que es la señal real de si esto necesita backfill o no.
 const lookupAccount = node({
   type: 'n8n-nodes-base.postgres',
   version: 2.6,
@@ -143,13 +160,34 @@ const lookupAccount = node({
       resource: 'database',
       operation: 'executeQuery',
       query:
-        "SELECT client_id, external_id AS ad_account_id, auth_method, oauth_access_token FROM data_sources WHERE client_id = $1::uuid AND platform = 'meta-ads'",
+        "SELECT ds.client_id, ds.external_id AS ad_account_id, ds.auth_method, ds.oauth_access_token, (SELECT COUNT(*) FROM meta_ad_daily m WHERE m.client_id = ds.client_id) AS ad_history_count FROM data_sources ds WHERE ds.client_id = $1::uuid AND ds.platform = 'meta-ads'",
       options: { queryReplacement: expr('{{ $json.client_id }}') },
     },
     credentials: { postgres: newCredential('Supabase Postgres') },
     position: [900, 300],
   },
-  output: [{ client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null }],
+  output: [{ client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null, ad_history_count: 0 }],
+})
+
+// Primera sincronización de este cliente (meta_ad_daily todavía vacía para
+// él) → pide todo el histórico disponible (date_preset "maximum"); cualquier
+// sincronización posterior vuelve a la ventana habitual de 30 días.
+const chooseDateWindow = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Elegir ventana de fechas',
+    parameters: {
+      mode: 'runOnceForEachItem',
+      language: 'javaScript',
+      jsCode: `const isFirstSync = Number($json.ad_history_count) === 0;
+return { json: { ...$json, datePreset: isFirstSync ? 'maximum' : 'last_30d', isFirstSync } };`,
+    },
+    position: [1000, 300],
+  },
+  output: [
+    { client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null, ad_history_count: 0, datePreset: 'last_30d', isFirstSync: false },
+  ],
 })
 
 const checkAuthMethod = ifElse({
@@ -190,10 +228,11 @@ const fetchInsightsApi = node({
           { name: 'level', value: 'ad' },
           { name: 'fields', value: 'ad_id,ad_name,campaign_id,impressions,clicks,spend,actions,action_values,frequency' },
           { name: 'time_increment', value: '1' },
-          { name: 'date_preset', value: 'last_30d' },
+          { name: 'date_preset', value: expr('{{ $json.datePreset }}') },
           { name: 'limit', value: '500' },
         ],
       },
+      options: { response: { response: { neverError: true } } },
     },
     credentials: { httpHeaderAuth: newCredential('Meta Ads Token') },
     position: [1360, 420],
@@ -243,7 +282,7 @@ const fetchInsightsOauth = node({
           { name: 'level', value: 'ad' },
           { name: 'fields', value: 'ad_id,ad_name,campaign_id,impressions,clicks,spend,actions,action_values,frequency' },
           { name: 'time_increment', value: '1' },
-          { name: 'date_preset', value: 'last_30d' },
+          { name: 'date_preset', value: expr('{{ $json.datePreset }}') },
           { name: 'limit', value: '500' },
         ],
       },
@@ -252,6 +291,7 @@ const fetchInsightsOauth = node({
       headerParameters: {
         parameters: [{ name: 'Authorization', value: expr('{{ "Bearer " + $json.oauth_access_token }}') }],
       },
+      options: { response: { response: { neverError: true } } },
     },
     position: [1360, 200],
   },
@@ -436,6 +476,7 @@ export default workflow('meta-ads-creatives-ingest', 'CRD - Meta Ads Creatividad
   .to(getClients)
   .to(mergePoint)
   .to(lookupAccount)
+  .to(chooseDateWindow)
   .to(
     checkAuthMethod
       .onTrue(fetchInsightsOauth.to(fetchFormatOauth.to(transformOauth.to(upsert))))

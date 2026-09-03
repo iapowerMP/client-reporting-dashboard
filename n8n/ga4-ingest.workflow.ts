@@ -139,13 +139,34 @@ const lookupAccount = node({
       resource: 'database',
       operation: 'executeQuery',
       query:
-        "SELECT client_id, external_id AS property_id, oauth_refresh_token FROM data_sources WHERE client_id = $1::uuid AND platform = 'ga4'",
+        "SELECT client_id, external_id AS property_id, oauth_refresh_token, last_sync FROM data_sources WHERE client_id = $1::uuid AND platform = 'ga4'",
       options: { queryReplacement: expr('{{ $json.client_id }}') },
     },
     credentials: { postgres: newCredential('Supabase Postgres') },
     position: [900, 300],
   },
-  output: [{ client_id: '', property_id: '', oauth_refresh_token: '' }],
+  output: [{ client_id: '', property_id: '', oauth_refresh_token: '', last_sync: null }],
+})
+
+// Primera sincronización de este cliente (last_sync todavía NULL) → pide
+// histórico desde el mínimo soportado por la Data API de GA4 (2015-08-14);
+// cualquier sincronización posterior vuelve a la ventana habitual de 30 días.
+const chooseDateWindow = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Elegir ventana de fechas',
+    parameters: {
+      mode: 'runOnceForEachItem',
+      language: 'javaScript',
+      jsCode: `const isFirstSync = !$json.last_sync;
+return { json: { ...$json, startDate: isFirstSync ? '2015-08-14' : '30daysAgo', isFirstSync } };`,
+    },
+    position: [1010, 300],
+  },
+  output: [
+    { client_id: '', property_id: '', oauth_refresh_token: '', last_sync: null, startDate: '30daysAgo', isFirstSync: false },
+  ],
 })
 
 const oauthConfig = node({
@@ -209,8 +230,9 @@ const fetchGa4 = node({
       sendBody: true,
       contentType: 'json',
       specifyBody: 'json',
-      jsonBody:
-        '{\n  "dateRanges": [{ "startDate": "30daysAgo", "endDate": "today" }],\n  "dimensions": [{ "name": "date" }, { "name": "sessionDefaultChannelGroup" }],\n  "metrics": [{ "name": "sessions" }, { "name": "activeUsers" }, { "name": "newUsers" }, { "name": "engagedSessions" }, { "name": "conversions" }],\n  "limit": 10000\n}',
+      jsonBody: expr(
+        '{{ JSON.stringify({ dateRanges: [{ startDate: $("Elegir ventana de fechas").item.json.startDate, endDate: "today" }], dimensions: [{ name: "date" }, { name: "sessionDefaultChannelGroup" }], metrics: [{ name: "sessions" }, { name: "activeUsers" }, { name: "newUsers" }, { name: "engagedSessions" }, { name: "conversions" }], limit: 10000 }) }}',
+      ),
     },
     position: [1560, 300],
   },
@@ -283,6 +305,7 @@ export default workflow('ga4-ingest', 'CRD - GA4 to Supabase (ingesta diaria, mu
   .to(getClients)
   .to(mergePoint)
   .to(lookupAccount)
+  .to(chooseDateWindow)
   .to(oauthConfig)
   .to(refreshToken)
   .to(fetchGa4)

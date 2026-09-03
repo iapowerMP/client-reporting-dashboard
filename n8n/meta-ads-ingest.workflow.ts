@@ -67,8 +67,15 @@
  *     acotado de action_types típicos de conversión (compra, lead, registro
  *     completado...). Puede afinarse por cliente según su evento de
  *     conversión real.
- *   - Sin paginación: suficiente para <500 filas (campañas × 30 días) por
- *     cliente; se añadirá si hace falta.
+ *   - Ventana de fechas: igual que Google Ads, "Elegir ventana de fechas" usa
+ *     data_sources.last_sync para distinguir la primera sincronización de un
+ *     cliente (todavía NULL) de las siguientes — date_preset "maximum" (todo
+ *     el histórico disponible en Meta, hasta ~37 meses) la primera vez,
+ *     "last_30d" después.
+ *   - Sin paginación: suficiente para <500 filas (campañas × días) por
+ *     cliente; en la primera sincronización de una cuenta con muchas
+ *     campañas y mucho histórico podría no bastar — si se detecta, añadir
+ *     manejo de `paging.next`.
  *   - El token de oauth (~60 días de vida) no se refresca automáticamente
  *     todavía: si caduca o el cliente revoca el acceso, esa cuenta empezará a
  *     fallar y habrá que pedirle que pulse "Reconectar con Facebook".
@@ -162,13 +169,34 @@ const lookupAccount = node({
       resource: 'database',
       operation: 'executeQuery',
       query:
-        "SELECT client_id, external_id AS ad_account_id, auth_method, oauth_access_token FROM data_sources WHERE client_id = $1::uuid AND platform = 'meta-ads'",
+        "SELECT client_id, external_id AS ad_account_id, auth_method, oauth_access_token, last_sync FROM data_sources WHERE client_id = $1::uuid AND platform = 'meta-ads'",
       options: { queryReplacement: expr('{{ $json.client_id }}') },
     },
     credentials: { postgres: newCredential('Supabase Postgres') },
     position: [900, 300],
   },
-  output: [{ client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null }],
+  output: [{ client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null, last_sync: null }],
+})
+
+// Primera sincronización de este cliente (last_sync todavía NULL) → pide todo
+// el histórico disponible en Meta (date_preset "maximum", hasta ~37 meses);
+// cualquier sincronización posterior vuelve a la ventana habitual de 30 días.
+const chooseDateWindow = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Elegir ventana de fechas',
+    parameters: {
+      mode: 'runOnceForEachItem',
+      language: 'javaScript',
+      jsCode: `const isFirstSync = !$json.last_sync;
+return { json: { ...$json, datePreset: isFirstSync ? 'maximum' : 'last_30d', isFirstSync } };`,
+    },
+    position: [1000, 300],
+  },
+  output: [
+    { client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null, last_sync: null, datePreset: 'last_30d', isFirstSync: false },
+  ],
 })
 
 const checkAuthMethod = ifElse({
@@ -209,7 +237,7 @@ const fetchMetaApi = node({
           { name: 'level', value: 'campaign' },
           { name: 'fields', value: 'campaign_id,campaign_name,spend,impressions,clicks,actions,action_values' },
           { name: 'time_increment', value: '1' },
-          { name: 'date_preset', value: 'last_30d' },
+          { name: 'date_preset', value: expr('{{ $json.datePreset }}') },
           { name: 'limit', value: '500' },
         ],
       },
@@ -235,7 +263,7 @@ const fetchMetaOauth = node({
           { name: 'level', value: 'campaign' },
           { name: 'fields', value: 'campaign_id,campaign_name,spend,impressions,clicks,actions,action_values' },
           { name: 'time_increment', value: '1' },
-          { name: 'date_preset', value: 'last_30d' },
+          { name: 'date_preset', value: expr('{{ $json.datePreset }}') },
           { name: 'limit', value: '500' },
         ],
       },
@@ -316,6 +344,7 @@ export default workflow('meta-ads-ingest', 'CRD - Meta Ads to Supabase (ingesta 
   .to(getClients)
   .to(mergePoint)
   .to(lookupAccount)
+  .to(chooseDateWindow)
   .to(
     checkAuthMethod
       .onTrue(fetchMetaOauth.to(transform.to(upsert)))
