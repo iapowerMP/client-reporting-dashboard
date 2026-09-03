@@ -44,6 +44,13 @@
  * Cada fila se etiqueta con el sitio (site_url) que la originó. Si un
  * cliente cambia de propiedad, /api/seo filtra siempre por la propiedad
  * actualmente guardada en data_sources.
+ *
+ * Ventana de fechas: "Calcular rango de fechas" usa data_sources.last_sync
+ * para pedir 480 días (el máximo que retiene Search Console, ~16 meses) en
+ * la primera sincronización de un cliente, y solo 30 en las siguientes. Sin
+ * paginación (rowLimit 25000 por consulta): en sitios con mucho tráfico y
+ * 480 días de histórico podría truncarse: si se detecta, añadir manejo de
+ * `startRow`.
  */
 import { workflow, node, trigger, newCredential, expr } from '@n8n/workflow-sdk'
 
@@ -132,13 +139,13 @@ const lookupAccount = node({
       resource: 'database',
       operation: 'executeQuery',
       query:
-        "SELECT client_id, external_id AS site_url, oauth_refresh_token FROM data_sources WHERE client_id = $1::uuid AND platform = 'gsc'",
+        "SELECT client_id, external_id AS site_url, oauth_refresh_token, last_sync FROM data_sources WHERE client_id = $1::uuid AND platform = 'gsc'",
       options: { queryReplacement: expr('{{ $json.client_id }}') },
     },
     credentials: { postgres: newCredential('Supabase Postgres') },
     position: [900, 300],
   },
-  output: [{ client_id: '', site_url: '', oauth_refresh_token: '' }],
+  output: [{ client_id: '', site_url: '', oauth_refresh_token: '', last_sync: null }],
 })
 
 const oauthConfig = node({
@@ -194,12 +201,14 @@ const dateRange = node({
     parameters: {
       mode: 'runOnceForEachItem',
       language: 'javaScript',
-      jsCode: `const toIso = (d) => d.toISOString().slice(0, 10);
+      jsCode: `const isFirstSync = !$('Buscar sitio y token').item.json.last_sync;
+const HISTORY_DAYS = isFirstSync ? 480 : 29; // 480 = ventana máxima que retiene Search Console (~16 meses)
+const toIso = (d) => d.toISOString().slice(0, 10);
 const end = new Date();
 end.setUTCDate(end.getUTCDate() - 2); // Search Console tarda ~2-3 días en consolidar los datos más recientes
 const start = new Date(end);
-start.setUTCDate(start.getUTCDate() - 29); // últimos 30 días, terminando en "end"
-return { json: { ...$json, startDate: toIso(start), endDate: toIso(end) } };`,
+start.setUTCDate(start.getUTCDate() - HISTORY_DAYS);
+return { json: { ...$json, startDate: toIso(start), endDate: toIso(end), isFirstSync } };`,
     },
     position: [1560, 300],
   },
