@@ -39,10 +39,15 @@
  *     Public Content Access", más sensible. Mientras tanto se aplica el
  *     valor actual a todas las filas del lote de 30 días — el histórico de
  *     seguidores no es exacto día a día, solo la tendencia reciente lo es.
- *   - Los nombres exactos de las métricas de Page Insights (page_impressions,
- *     page_engaged_users) deben revisarse contra la versión vigente de la
- *     Graph API al probar el workflow por primera vez: Meta ha ido
- *     deprecando métricas de Insights de Página en distintas versiones.
+ *   - page_impressions/page_engaged_users ya están deprecadas por Meta (aviso
+ *     de nov-2025, efectivas desde entonces): la Graph API devuelve
+ *     "(#100) The value must be a valid insights metric". "Insights de la
+ *     pagina" tiene options.response.neverError = true para que ese fallo no
+ *     bloquee el resto de la sincronización (seguidores + last_sync siguen
+ *     actualizándose); mientras tanto impressions/engaged_users quedan en 0,
+ *     igual que hace ya el resto de la app cuando no hay dato real. Pendiente
+ *     de sustituir por las métricas de reemplazo de Meta (parece ser la
+ *     familia "views"/"page_follows") una vez confirmados los nombres exactos.
  *   - El token de página no se refresca automáticamente: si caduca o el
  *     cliente revoca el acceso, habrá que pedirle que pulse "Reconectar con
  *     Facebook".
@@ -207,6 +212,7 @@ const fetchInsights = node({
           { name: 'access_token', value: expr('{{ $("Buscar pagina y token").item.json.oauth_access_token }}') },
         ],
       },
+      options: { response: { response: { neverError: true } } },
     },
     position: [1560, 300],
   },

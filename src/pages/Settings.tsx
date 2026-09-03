@@ -426,6 +426,18 @@ function ConnectionCard({
         </>
       )}
 
+      {/* Conexiones solo por inicio de sesión: no hay campo editable (el ID
+          lo resuelve el propio login), pero se muestra igualmente en modo
+          lectura para que se vea qué cuenta quedó conectada. */}
+      {conn.oauthOnly && conn.value && (
+        <div className="mt-4">
+          <span className="mb-1.5 block text-xs text-text-secondary">{conn.label}</span>
+          <div className="w-full truncate rounded-control border border-border bg-base px-3 py-2 text-sm text-text-primary">
+            {conn.value}
+          </div>
+        </div>
+      )}
+
       <div className="mt-3 min-h-[18px] text-xs text-text-secondary">
         {conn.statusNote}
       </div>
