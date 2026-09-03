@@ -189,6 +189,13 @@ function htmlError(message: string): string {
 }
 
 export default async function handler(req: any, res: any) {
+  // Todas las respuestas dependen de una cookie de sesión (o de Facebook en
+  // el momento) y nunca deben cachearse: sin esto, tanto el navegador como
+  // la CDN de Vercel pueden servir una respuesta vieja de "accounts" para la
+  // misma URL, mostrando páginas de un intento de login anterior en vez de
+  // las recién concedidas.
+  res.setHeader('Cache-Control', 'no-store, must-revalidate')
+
   const action = typeof req.query?.action === 'string' ? req.query.action : ''
   try {
     switch (action) {
