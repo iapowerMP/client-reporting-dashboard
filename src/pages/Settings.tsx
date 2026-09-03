@@ -223,6 +223,7 @@ function OauthAccountPicker({
   loading,
   error,
   accounts,
+  diagnostic,
   selected,
   onSelect,
   confirming,
@@ -233,6 +234,7 @@ function OauthAccountPicker({
   loading: boolean
   error: string | null
   accounts: OauthAccount[] | null
+  diagnostic: string | null
   selected: string
   onSelect: (id: string) => void
   confirming: boolean
@@ -251,9 +253,10 @@ function OauthAccountPicker({
           {loading && <p className="py-6 text-center text-sm text-text-secondary">Cargando cuentas...</p>}
           {error && <p className="py-6 text-center text-sm text-negative">{error}</p>}
           {!loading && !error && accounts?.length === 0 && (
-            <p className="py-6 text-center text-sm text-text-secondary">
-              Esa cuenta no administra ninguna cuenta de {platformLabel}.
-            </p>
+            <div className="py-6 text-center text-sm text-text-secondary">
+              <p>Esa cuenta no administra ninguna cuenta de {platformLabel}.</p>
+              {diagnostic && <p className="mt-2 text-xs text-negative">{diagnostic}</p>}
+            </div>
           )}
           {!loading &&
             !error &&
@@ -582,6 +585,7 @@ export default function Settings() {
   const [oauthAccounts, setOauthAccounts] = useState<OauthAccount[] | null>(null)
   const [oauthAccountsLoading, setOauthAccountsLoading] = useState(false)
   const [oauthAccountsError, setOauthAccountsError] = useState<string | null>(null)
+  const [oauthDiagnostic, setOauthDiagnostic] = useState<string | null>(null)
   const [selectedOauthAccount, setSelectedOauthAccount] = useState('')
   const [finalizingOauth, setFinalizingOauth] = useState(false)
 
@@ -589,6 +593,7 @@ export default function Settings() {
     if (!activeOauthPlatform) return
     setOauthAccountsLoading(true)
     setOauthAccountsError(null)
+    setOauthDiagnostic(null)
     const accountsUrl = new URL(OAUTH_CONFIG[activeOauthPlatform].accountsUrl, window.location.origin)
     accountsUrl.searchParams.set('client', clientSlug)
     fetch(accountsUrl.toString())
@@ -596,6 +601,7 @@ export default function Settings() {
         const body = await resp.json().catch(() => ({}))
         if (!resp.ok) throw new Error(body?.error || 'No se pudieron cargar las cuentas.')
         setOauthAccounts(body.accounts ?? [])
+        setOauthDiagnostic(body.diagnostic ?? null)
       })
       .catch((e) => setOauthAccountsError(e instanceof Error ? e.message : 'No se pudieron cargar las cuentas.'))
       .finally(() => setOauthAccountsLoading(false))
@@ -616,6 +622,7 @@ export default function Settings() {
     setSearchParams(next, { replace: true })
     setOauthAccounts(null)
     setOauthAccountsError(null)
+    setOauthDiagnostic(null)
     setSelectedOauthAccount('')
   }
 
@@ -991,6 +998,7 @@ export default function Settings() {
           loading={oauthAccountsLoading}
           error={oauthAccountsError}
           accounts={oauthAccounts}
+          diagnostic={oauthDiagnostic}
           selected={selectedOauthAccount}
           onSelect={setSelectedOauthAccount}
           confirming={finalizingOauth}

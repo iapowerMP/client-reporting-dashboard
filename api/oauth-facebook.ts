@@ -343,6 +343,27 @@ async function handleAccounts(req: any, res: any) {
     }
     if (!resp.ok) throw new Error(body.error?.message || `Facebook respondió ${resp.status}.`)
 
+    // Diagnóstico: si Facebook no devuelve ninguna página pese a que la
+    // cuenta sí las administra, casi siempre es porque el token no llegó a
+    // llevar el permiso pages_show_list concedido (el usuario no lo aceptó
+    // explícitamente en el selector de páginas del propio diálogo de
+    // Facebook, o el acceso es solo por rol de Business Manager sin
+    // "acceso de Facebook" activado en esa página). Se comprueba aquí para
+    // devolver un mensaje que señale la causa real en vez de uno genérico.
+    if (!body.data || body.data.length === 0) {
+      const permsResp = await fetch(
+        `https://graph.facebook.com/v25.0/me/permissions?access_token=${encodeURIComponent(token)}`,
+      )
+      const permsBody = (await permsResp.json()) as { data?: Array<{ permission: string; status: string }> }
+      const pagesShowList = permsBody.data?.find((p) => p.permission === 'pages_show_list')
+      const detail =
+        pagesShowList?.status === 'granted'
+          ? 'El permiso pages_show_list está concedido pero Facebook no devolvió ninguna página: revisa que la página tenga "acceso de Facebook" activado para esta cuenta en Business Manager (no solo acceso de tarea/empleado).'
+          : `El permiso pages_show_list no quedó concedido en el inicio de sesión (estado: ${pagesShowList?.status ?? 'no solicitado'}). Vuelve a pulsar "Conectar con Facebook" y, en el diálogo de Facebook, revisa/activa manualmente las páginas en el paso de selección de páginas antes de continuar.`
+      res.status(200).json({ accounts: [], diagnostic: detail })
+      return
+    }
+
     if (service === 'page') {
       const accounts = (body.data ?? []).map((p) => ({ id: p.id, name: p.name }))
       res.status(200).json({ accounts })
