@@ -44,9 +44,35 @@ const STATE_TTL_MS = 10 * 60 * 1000
 const PENDING_TTL_S = 10 * 60
 const LONG_LIVED_TOKEN_TTL_S = 60 * 24 * 60 * 60 // Meta emite el token de larga duración con ~60 días de vida.
 
-// Diagnóstico temporal para el caso abierto de "The Media Power Agency" —
-// ver el comentario en handleAccounts. Quitar junto con ese bloque.
-const TROUBLESHOOT_PAGE_ID = '105089828061313'
+interface FacebookPage {
+  id: string
+  name: string
+  instagram_business_account?: { id: string; username: string }
+}
+
+/**
+ * Trae TODAS las páginas de /me/accounts siguiendo la paginación de
+ * Facebook. Importante: la Graph API corta la respuesta a un tamaño de
+ * página menor que el `limit` pedido (se ha visto con una cuenta que
+ * administra 106 páginas: solo llegaban las primeras ~100), así que hay que
+ * seguir `paging.next` hasta agotarlo o nunca se ven las cuentas del final.
+ */
+async function fetchAllFacebookPages(token: string): Promise<FacebookPage[]> {
+  const pages: FacebookPage[] = []
+  let url: string | null = `https://graph.facebook.com/v25.0/me/accounts?${new URLSearchParams({
+    fields: 'id,name,instagram_business_account{id,username}',
+    limit: '100',
+    access_token: token,
+  }).toString()}`
+  for (let i = 0; url && i < 50; i++) {
+    const resp = await fetch(url)
+    const body = (await resp.json()) as { data?: FacebookPage[]; paging?: { next?: string }; error?: { message: string } }
+    if (!resp.ok) throw new Error(body.error?.message || `Facebook respondió ${resp.status}.`)
+    pages.push(...(body.data ?? []))
+    url = body.paging?.next ?? null
+  }
+  return pages
+}
 
 function isFacebookService(value: unknown): value is FacebookService {
   return value === 'ads' || value === 'page' || value === 'instagram'
@@ -334,18 +360,7 @@ async function handleAccounts(req: any, res: any) {
     }
 
     // service === 'page' | 'instagram' — ambas parten de la lista de páginas.
-    const resp = await fetch(
-      `https://graph.facebook.com/v25.0/me/accounts?${new URLSearchParams({
-        fields: 'id,name,instagram_business_account{id,username}',
-        limit: '200',
-        access_token: token,
-      }).toString()}`,
-    )
-    const body = (await resp.json()) as {
-      data?: Array<{ id: string; name: string; instagram_business_account?: { id: string; username: string } }>
-      error?: { message: string }
-    }
-    if (!resp.ok) throw new Error(body.error?.message || `Facebook respondió ${resp.status}.`)
+    const pages = await fetchAllFacebookPages(token)
 
     // Diagnóstico: si Facebook no devuelve ninguna página pese a que la
     // cuenta sí las administra, casi siempre es porque el token no llegó a
@@ -354,7 +369,7 @@ async function handleAccounts(req: any, res: any) {
     // Facebook, o el acceso es solo por rol de Business Manager sin
     // "acceso de Facebook" activado en esa página). Se comprueba aquí para
     // devolver un mensaje que señale la causa real en vez de uno genérico.
-    if (!body.data || body.data.length === 0) {
+    if (pages.length === 0) {
       const permsResp = await fetch(
         `https://graph.facebook.com/v25.0/me/permissions?access_token=${encodeURIComponent(token)}`,
       )
@@ -369,38 +384,13 @@ async function handleAccounts(req: any, res: any) {
     }
 
     if (service === 'page') {
-      const accounts = (body.data ?? []).map((p) => ({ id: p.id, name: p.name }))
-
-      // Diagnóstico temporal: "The Media Power Agency" (id conocido) tiene
-      // acceso total confirmado en Business Manager pero no aparece en
-      // /me/accounts aunque sí aparezcan otras páginas. Se pide esa página
-      // directamente para ver el error real de Facebook en vez de seguir
-      // adivinando la causa. Quitar en cuanto se resuelva el caso.
-      if (!accounts.some((a) => a.id === TROUBLESHOOT_PAGE_ID)) {
-        const pageResp = await fetch(
-          `https://graph.facebook.com/v25.0/${TROUBLESHOOT_PAGE_ID}?${new URLSearchParams({
-            fields: 'name,access_token',
-            access_token: token,
-          }).toString()}`,
-        )
-        const pageBody = (await pageResp.json()) as {
-          name?: string
-          access_token?: string
-          error?: { message: string; type?: string; code?: number }
-        }
-        const diagnostic = pageResp.ok
-          ? `Facebook sí devuelve datos de "${pageBody.name}" al pedirla directamente (id ${TROUBLESHOOT_PAGE_ID}), pero no la incluyó en /me/accounts — probablemente un límite de la propia respuesta de Facebook, no de permisos.`
-          : `Facebook devuelve este error al pedir directamente The Media Power Agency (id ${TROUBLESHOOT_PAGE_ID}): "${pageBody.error?.message}"${pageBody.error?.code ? ` (código ${pageBody.error.code}${pageBody.error.type ? `, tipo ${pageBody.error.type}` : ''})` : ''}.`
-        res.status(200).json({ accounts, diagnostic })
-        return
-      }
-
+      const accounts = pages.map((p) => ({ id: p.id, name: p.name }))
       res.status(200).json({ accounts })
       return
     }
 
     // service === 'instagram': solo páginas con una cuenta de Instagram Business/Creator vinculada.
-    const accounts = (body.data ?? [])
+    const accounts = pages
       .filter((p) => p.instagram_business_account)
       .map((p) => ({
         id: p.instagram_business_account!.id,
