@@ -9,18 +9,36 @@
  *
  * Dos formas de disparar la ingesta, que convergen en el mismo procesamiento:
  *   1. Schedule (diario, 6:00) → Postgres (lee en Supabase qué clientes tienen
- *      un Customer ID de Google Ads guardado, tabla data_sources) → uno por
- *      cliente.
+ *      un Customer ID de Google Ads guardado, tabla data_sources, junto con su
+ *      last_sync) → uno por cliente.
  *   2. Webhook (POST) → lo llama /api/sync-source cuando el project manager
  *      pulsa "Sincronizar" en Configuración, para forzar la sincronización
  *      inmediata de un cliente concreto (por ejemplo, justo después de
- *      cambiar su Customer ID). Recibe { clientId, customerId } en el body.
+ *      cambiar su Customer ID). Recibe { clientId, customerId } en el body;
+ *      se vuelve a consultar data_sources para obtener también su last_sync.
  *
  * A partir de ahí, ambas rutas comparten: Config compartida (developerToken/
  * loginCustomerId/apiVersion, iguales para todos porque se accede vía una
- * cuenta MCC) → HTTP a Google Ads (GAQL, últimos 30 días) → Code (transforma
- * la respuesta a un UPSERT SQL + un UPDATE de data_sources.last_sync) →
- * Postgres (ejecuta ambas sentencias contra Supabase).
+ * cuenta MCC) → Construir consulta GAQL (decide la ventana de fechas, ver
+ * abajo) → HTTP a Google Ads → Code (transforma la respuesta a un UPSERT SQL
+ * + un UPDATE de data_sources.last_sync) → Postgres (ejecuta ambas sentencias
+ * contra Supabase).
+ *
+ * Ventana de fechas — primera sincronización vs. repeticiones:
+ *   data_sources.last_sync es NULL hasta que este workflow completa su primera
+ *   ejecución para un cliente. El nodo "Construir consulta GAQL" usa esa señal:
+ *     - Si last_sync es NULL (primera sincronización de verdad, nunca antes
+ *       sincronizado): pide TODO el histórico disponible dentro de una ventana
+ *       amplia (segments.date BETWEEN hoy-730 días AND hoy), para volcar de
+ *       golpe cuanto dato sea posible.
+ *     - Si ya hay last_sync (cualquier sincronización posterior, programada o
+ *       manual): vuelve a la ventana habitual de LAST_30_DAYS, que es la que
+ *       importa para mantener corregidas las conversiones tardías recientes.
+ *   Aviso: la paginación de la API de Google Ads no está implementada (ver
+ *   nota más abajo) — para cuentas con muchas campañas, una primera
+ *   sincronización de 730 días podría superar el límite de filas por página
+ *   y truncarse en silencio. Si eso llega a pasar con algún cliente, hay que
+ *   añadir manejo de `nextPageToken` en el nodo "Google Ads search".
  *
  * Al ser dinámico, NO hace falta tocar este workflow cuando se añade un
  * cliente nuevo: basta con que el project manager guarde el Customer ID de su
@@ -30,7 +48,8 @@
  *
  * Credenciales a configurar en n8n (compartidas para todos los clientes):
  *   - Google Ads OAuth2 (nodo "Google Ads search"), vía una cuenta MCC.
- *   - Postgres → Supabase (nodos "Clientes con Google Ads" y "Upsert en Supabase").
+ *   - Postgres → Supabase (nodos "Clientes con Google Ads", "Buscar last_sync
+ *     (manual)" y "Upsert en Supabase").
  *
  * En el nodo "Config compartida" hay que rellenar: loginCustomerId (MCC id sin
  * guiones), developerToken y apiVersion.
@@ -52,8 +71,8 @@
  *
  * Nota: apiVersion está en "v24" (vigente a jul-2026; Google descontinuó v17-v19).
  * Revisar periódicamente en developers.google.com/google-ads/api/docs/release-notes.
- * La paginación no está implementada (suficiente para <10k filas / 30 días por
- * cliente); se añadirá si hace falta.
+ * La paginación no está implementada (suficiente para <10k filas por consulta);
+ * se añadirá si hace falta (ver aviso sobre la ventana de 730 días arriba).
  */
 import { workflow, node, trigger, newCredential, expr } from '@n8n/workflow-sdk'
 
@@ -77,12 +96,12 @@ const getClients = node({
       resource: 'database',
       operation: 'executeQuery',
       query:
-        "SELECT client_id, external_id AS customer_id FROM data_sources WHERE platform = 'google-ads' AND external_id IS NOT NULL",
+        "SELECT client_id, external_id AS customer_id, last_sync FROM data_sources WHERE platform = 'google-ads' AND external_id IS NOT NULL",
     },
     credentials: { postgres: newCredential('Supabase Postgres') },
     position: [460, 300],
   },
-  output: [{ client_id: '', customer_id: '' }],
+  output: [{ client_id: '', customer_id: '', last_sync: '' }],
 })
 
 const manualSyncWebhook = trigger({
@@ -121,6 +140,29 @@ const normalizeWebhookPayload = node({
   output: [{ client_id: '', customer_id: '' }],
 })
 
+// Solo el camino del webhook necesita esto: el disparador programado ya trae
+// last_sync de fábrica (viene de la misma tabla, "Clientes con Google Ads").
+// Se vuelve a consultar last_sync en vez de fiarse de un valor que llegara en
+// el body, para que la señal de "primera sincronización" sea siempre la real
+// guardada en Supabase.
+const lookupLastSyncForWebhook = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Buscar last_sync (manual)',
+    parameters: {
+      resource: 'database',
+      operation: 'executeQuery',
+      query: expr(
+        "SELECT '{{ $json.client_id }}'::uuid AS client_id, '{{ $json.customer_id }}' AS customer_id, last_sync FROM data_sources WHERE client_id = '{{ $json.client_id }}'::uuid AND platform = 'google-ads'",
+      ),
+    },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [670, 560],
+  },
+  output: [{ client_id: '', customer_id: '', last_sync: '' }],
+})
+
 const sharedConfig = node({
   type: 'n8n-nodes-base.set',
   version: 3.4,
@@ -137,9 +179,51 @@ const sharedConfig = node({
       },
       includeOtherFields: true,
     },
-    position: [680, 420],
+    position: [900, 420],
   },
-  output: [{ client_id: '', customer_id: '', loginCustomerId: '', developerToken: '', apiVersion: '' }],
+  output: [{ client_id: '', customer_id: '', last_sync: '', loginCustomerId: '', developerToken: '', apiVersion: '' }],
+})
+
+// Decide la ventana de fechas de la consulta GAQL: histórico amplio (730 días)
+// si es la primera sincronización de este cliente (last_sync todavía NULL),
+// o los últimos 30 días de siempre en cualquier repetición posterior.
+const buildGaqlQuery = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Construir consulta GAQL',
+    parameters: {
+      mode: 'runOnceForEachItem',
+      language: 'javaScript',
+      jsCode: `const isFirstSync = !$json.last_sync;
+const HISTORY_DAYS = 730;
+let where;
+if (isFirstSync) {
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(start.getDate() - HISTORY_DAYS);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  where = "segments.date BETWEEN '" + fmt(start) + "' AND '" + fmt(end) + "'";
+} else {
+  where = 'segments.date DURING LAST_30_DAYS';
+}
+const query = 'SELECT campaign.id, campaign.name, campaign.status, segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE ' + where + ' ORDER BY segments.date';
+return { json: { ...$json, gaqlQuery: query, isFirstSync } };`,
+    },
+    position: [1120, 300],
+  },
+  output: [
+    {
+      client_id: '',
+      customer_id: '',
+      last_sync: '',
+      loginCustomerId: '',
+      developerToken: '',
+      apiVersion: '',
+      gaqlQuery: '',
+      isFirstSync: false,
+    },
+  ],
 })
 
 const fetchGads = node({
@@ -165,11 +249,10 @@ const fetchGads = node({
       sendBody: true,
       contentType: 'json',
       specifyBody: 'json',
-      jsonBody:
-        '{\n  "query": "SELECT campaign.id, campaign.name, campaign.status, segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE segments.date DURING LAST_30_DAYS ORDER BY segments.date"\n}',
+      jsonBody: expr('{{ JSON.stringify({ query: $json.gaqlQuery }) }}'),
     },
     credentials: { googleAdsOAuth2Api: newCredential('Google Ads') },
-    position: [900, 300],
+    position: [1340, 300],
   },
   output: [{ results: [] }],
 })
@@ -221,7 +304,7 @@ const upsertQuery =
   ' ON CONFLICT (client_id, date, campaign_id) DO UPDATE SET campaign_name = EXCLUDED.campaign_name, status = EXCLUDED.status, cost = EXCLUDED.cost, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, customer_id = EXCLUDED.customer_id, updated_at = now();';
 return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: rows.length } };`,
     },
-    position: [1120, 300],
+    position: [1560, 300],
   },
   output: [{ query: '', rowCount: 0 }],
 })
@@ -233,7 +316,7 @@ const upsert = node({
     name: 'Upsert en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
-    position: [1340, 300],
+    position: [1780, 300],
   },
   output: [{}],
 })
@@ -242,9 +325,11 @@ export default workflow('gads-ingest', 'CRD - Google Ads to Supabase (ingesta di
   .add(scheduleTrigger)
   .to(getClients)
   .to(sharedConfig)
+  .to(buildGaqlQuery)
   .to(fetchGads)
   .to(transform)
   .to(upsert)
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
+  .to(lookupLastSyncForWebhook)
   .to(sharedConfig)

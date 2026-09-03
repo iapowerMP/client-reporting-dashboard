@@ -166,6 +166,10 @@ function htmlError(message: string): string {
 }
 
 export default async function handler(req: any, res: any) {
+  // Ver el mismo cambio en api/oauth-facebook.ts: la respuesta depende de
+  // una cookie de sesión y nunca debe cachearse en el navegador ni en la CDN.
+  res.setHeader('Cache-Control', 'no-store, must-revalidate')
+
   const action = typeof req.query?.action === 'string' ? req.query.action : ''
   try {
     switch (action) {

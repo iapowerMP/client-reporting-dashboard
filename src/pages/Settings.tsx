@@ -223,6 +223,7 @@ function OauthAccountPicker({
   loading,
   error,
   accounts,
+  diagnostic,
   selected,
   onSelect,
   confirming,
@@ -233,6 +234,7 @@ function OauthAccountPicker({
   loading: boolean
   error: string | null
   accounts: OauthAccount[] | null
+  diagnostic: string | null
   selected: string
   onSelect: (id: string) => void
   confirming: boolean
@@ -250,6 +252,7 @@ function OauthAccountPicker({
         <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
           {loading && <p className="py-6 text-center text-sm text-text-secondary">Cargando cuentas...</p>}
           {error && <p className="py-6 text-center text-sm text-negative">{error}</p>}
+          {!loading && !error && diagnostic && <p className="text-xs text-negative">{diagnostic}</p>}
           {!loading && !error && accounts?.length === 0 && (
             <p className="py-6 text-center text-sm text-text-secondary">
               Esa cuenta no administra ninguna cuenta de {platformLabel}.
@@ -430,11 +433,6 @@ function ConnectionCard({
             {LoginIcon && <LoginIcon className="h-4 w-4" />}
             {conn.authMethod === 'oauth' ? `Reconectar con ${conn.loginProvider}` : `Conectar con ${conn.loginProvider}`}
           </button>
-          {conn.loginProvider === 'Facebook' && (
-            <p className="mt-2 text-xs text-negative">
-              Pendiente de aprobación por Meta: el inicio de sesión con Facebook solo funcionará para cuentas propias del equipo hasta que Meta apruebe los permisos ampliados (App Review).
-            </p>
-          )}
         </div>
       )}
 
@@ -587,6 +585,7 @@ export default function Settings() {
   const [oauthAccounts, setOauthAccounts] = useState<OauthAccount[] | null>(null)
   const [oauthAccountsLoading, setOauthAccountsLoading] = useState(false)
   const [oauthAccountsError, setOauthAccountsError] = useState<string | null>(null)
+  const [oauthDiagnostic, setOauthDiagnostic] = useState<string | null>(null)
   const [selectedOauthAccount, setSelectedOauthAccount] = useState('')
   const [finalizingOauth, setFinalizingOauth] = useState(false)
 
@@ -594,6 +593,7 @@ export default function Settings() {
     if (!activeOauthPlatform) return
     setOauthAccountsLoading(true)
     setOauthAccountsError(null)
+    setOauthDiagnostic(null)
     const accountsUrl = new URL(OAUTH_CONFIG[activeOauthPlatform].accountsUrl, window.location.origin)
     accountsUrl.searchParams.set('client', clientSlug)
     fetch(accountsUrl.toString())
@@ -601,6 +601,10 @@ export default function Settings() {
         const body = await resp.json().catch(() => ({}))
         if (!resp.ok) throw new Error(body?.error || 'No se pudieron cargar las cuentas.')
         setOauthAccounts(body.accounts ?? [])
+        setOauthDiagnostic(body.diagnostic ?? null)
+        // Diagnóstico temporal del caso de páginas de Facebook que faltan al
+        // conectar — quitar junto con debugMeta en api/oauth-facebook.ts.
+        if (body.debugMeta) console.log('[oauth-facebook debugMeta]', body.debugMeta)
       })
       .catch((e) => setOauthAccountsError(e instanceof Error ? e.message : 'No se pudieron cargar las cuentas.'))
       .finally(() => setOauthAccountsLoading(false))
@@ -621,6 +625,7 @@ export default function Settings() {
     setSearchParams(next, { replace: true })
     setOauthAccounts(null)
     setOauthAccountsError(null)
+    setOauthDiagnostic(null)
     setSelectedOauthAccount('')
   }
 
@@ -996,6 +1001,7 @@ export default function Settings() {
           loading={oauthAccountsLoading}
           error={oauthAccountsError}
           accounts={oauthAccounts}
+          diagnostic={oauthDiagnostic}
           selected={selectedOauthAccount}
           onSelect={setSelectedOauthAccount}
           confirming={finalizingOauth}
