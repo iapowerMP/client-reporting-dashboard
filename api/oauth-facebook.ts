@@ -44,6 +44,10 @@ const STATE_TTL_MS = 10 * 60 * 1000
 const PENDING_TTL_S = 10 * 60
 const LONG_LIVED_TOKEN_TTL_S = 60 * 24 * 60 * 60 // Meta emite el token de larga duración con ~60 días de vida.
 
+// Diagnóstico temporal para el caso abierto de "The Media Power Agency" —
+// ver el comentario en handleAccounts. Quitar junto con ese bloque.
+const TROUBLESHOOT_PAGE_ID = '105089828061313'
+
 interface FacebookPage {
   id: string
   name: string
@@ -394,6 +398,33 @@ async function handleAccounts(req: any, res: any) {
 
     if (service === 'page') {
       const accounts = pages.map((p) => ({ id: p.id, name: p.name }))
+
+      // Diagnóstico dirigido temporal: "The Media Power Agency" (id
+      // conocido) sigue sin aparecer aunque se seleccione ella sola en el
+      // diálogo de Facebook (se ha descartado que sea un tema de paginación
+      // ni de acceso en Business Manager). Se pide directamente por su ID
+      // para capturar el error real de Facebook. Quitar en cuanto se cierre
+      // el caso.
+      if (!accounts.some((a) => a.id === TROUBLESHOOT_PAGE_ID)) {
+        const pageResp = await fetch(
+          `https://graph.facebook.com/v25.0/${TROUBLESHOOT_PAGE_ID}?${new URLSearchParams({
+            fields: 'name,access_token,tasks',
+            access_token: token,
+          }).toString()}`,
+        )
+        const pageBody = (await pageResp.json()) as {
+          name?: string
+          access_token?: string
+          tasks?: string[]
+          error?: { message: string; type?: string; code?: number; error_subcode?: number }
+        }
+        const diagnostic = pageResp.ok
+          ? `Facebook sí devuelve datos de "${pageBody.name}" al pedirla directamente (id ${TROUBLESHOOT_PAGE_ID}, tasks: ${JSON.stringify(pageBody.tasks)}, ¿trae access_token?: ${!!pageBody.access_token}), pero no la incluye en /me/accounts.`
+          : `Facebook devuelve este error al pedir directamente The Media Power Agency (id ${TROUBLESHOOT_PAGE_ID}): "${pageBody.error?.message}"${pageBody.error?.code ? ` (código ${pageBody.error.code}${pageBody.error.error_subcode ? `.${pageBody.error.error_subcode}` : ''}${pageBody.error.type ? `, tipo ${pageBody.error.type}` : ''})` : ''}.`
+        res.status(200).json({ accounts, diagnostic, debugMeta })
+        return
+      }
+
       res.status(200).json({ accounts, debugMeta })
       return
     }

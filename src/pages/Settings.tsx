@@ -252,11 +252,11 @@ function OauthAccountPicker({
         <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
           {loading && <p className="py-6 text-center text-sm text-text-secondary">Cargando cuentas...</p>}
           {error && <p className="py-6 text-center text-sm text-negative">{error}</p>}
+          {!loading && !error && diagnostic && <p className="text-xs text-negative">{diagnostic}</p>}
           {!loading && !error && accounts?.length === 0 && (
-            <div className="py-6 text-center text-sm text-text-secondary">
-              <p>Esa cuenta no administra ninguna cuenta de {platformLabel}.</p>
-              {diagnostic && <p className="mt-2 text-xs text-negative">{diagnostic}</p>}
-            </div>
+            <p className="py-6 text-center text-sm text-text-secondary">
+              Esa cuenta no administra ninguna cuenta de {platformLabel}.
+            </p>
           )}
           {!loading &&
             !error &&
