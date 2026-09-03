@@ -44,6 +44,10 @@ const STATE_TTL_MS = 10 * 60 * 1000
 const PENDING_TTL_S = 10 * 60
 const LONG_LIVED_TOKEN_TTL_S = 60 * 24 * 60 * 60 // Meta emite el token de larga duración con ~60 días de vida.
 
+// Diagnóstico temporal para el caso abierto de "The Media Power Agency" —
+// ver el comentario en handleAccounts. Quitar junto con ese bloque.
+const TROUBLESHOOT_PAGE_ID = '105089828061313'
+
 function isFacebookService(value: unknown): value is FacebookService {
   return value === 'ads' || value === 'page' || value === 'instagram'
 }
@@ -366,6 +370,31 @@ async function handleAccounts(req: any, res: any) {
 
     if (service === 'page') {
       const accounts = (body.data ?? []).map((p) => ({ id: p.id, name: p.name }))
+
+      // Diagnóstico temporal: "The Media Power Agency" (id conocido) tiene
+      // acceso total confirmado en Business Manager pero no aparece en
+      // /me/accounts aunque sí aparezcan otras páginas. Se pide esa página
+      // directamente para ver el error real de Facebook en vez de seguir
+      // adivinando la causa. Quitar en cuanto se resuelva el caso.
+      if (!accounts.some((a) => a.id === TROUBLESHOOT_PAGE_ID)) {
+        const pageResp = await fetch(
+          `https://graph.facebook.com/v25.0/${TROUBLESHOOT_PAGE_ID}?${new URLSearchParams({
+            fields: 'name,access_token',
+            access_token: token,
+          }).toString()}`,
+        )
+        const pageBody = (await pageResp.json()) as {
+          name?: string
+          access_token?: string
+          error?: { message: string; type?: string; code?: number }
+        }
+        const diagnostic = pageResp.ok
+          ? `Facebook sí devuelve datos de "${pageBody.name}" al pedirla directamente (id ${TROUBLESHOOT_PAGE_ID}), pero no la incluyó en /me/accounts — probablemente un límite de la propia respuesta de Facebook, no de permisos.`
+          : `Facebook devuelve este error al pedir directamente The Media Power Agency (id ${TROUBLESHOOT_PAGE_ID}): "${pageBody.error?.message}"${pageBody.error?.code ? ` (código ${pageBody.error.code}${pageBody.error.type ? `, tipo ${pageBody.error.type}` : ''})` : ''}.`
+        res.status(200).json({ accounts, diagnostic })
+        return
+      }
+
       res.status(200).json({ accounts })
       return
     }
