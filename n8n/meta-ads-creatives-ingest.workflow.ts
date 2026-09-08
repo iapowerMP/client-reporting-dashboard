@@ -245,7 +245,7 @@ const fetchInsightsApi = node({
       queryParameters: {
         parameters: [
           { name: 'level', value: 'ad' },
-          { name: 'fields', value: 'ad_id,ad_name,campaign_id,impressions,clicks,spend,actions,action_values,frequency' },
+          { name: 'fields', value: 'ad_id,ad_name,campaign_id,impressions,clicks,spend,actions,action_values,conversions,conversion_values,frequency' },
           { name: 'time_increment', value: '1' },
           { name: 'date_preset', value: expr('{{ $json.datePreset }}') },
           { name: 'limit', value: '500' },
@@ -299,7 +299,7 @@ const fetchInsightsOauth = node({
       queryParameters: {
         parameters: [
           { name: 'level', value: 'ad' },
-          { name: 'fields', value: 'ad_id,ad_name,campaign_id,impressions,clicks,spend,actions,action_values,frequency' },
+          { name: 'fields', value: 'ad_id,ad_name,campaign_id,impressions,clicks,spend,actions,action_values,conversions,conversion_values,frequency' },
           { name: 'time_increment', value: '1' },
           { name: 'date_preset', value: expr('{{ $json.datePreset }}') },
           { name: 'limit', value: '500' },
@@ -391,8 +391,11 @@ for (const r of insights) {
   cur.impressions += num(r.impressions);
   cur.clicks += num(r.clicks);
   cur.cost += num(r.spend);
-  cur.conversions += sumActions(r.actions);
-  cur.conversions_value += sumActions(r.action_values);
+  // Un override apunta casi siempre a un evento de pixel "en crudo" (no un
+  // objeto Custom Conversion formal): solo se desglosa por nombre en
+  // conversions/conversion_values, no en actions/action_values.
+  cur.conversions += sumActions(conversionOverride ? r.conversions : r.actions);
+  cur.conversions_value += sumActions(conversionOverride ? r.conversion_values : r.action_values);
   cur.frequency = num(r.frequency);
   byAdDate.set(key, cur);
 }
@@ -460,8 +463,11 @@ for (const r of insights) {
   cur.impressions += num(r.impressions);
   cur.clicks += num(r.clicks);
   cur.cost += num(r.spend);
-  cur.conversions += sumActions(r.actions);
-  cur.conversions_value += sumActions(r.action_values);
+  // Un override apunta casi siempre a un evento de pixel "en crudo" (no un
+  // objeto Custom Conversion formal): solo se desglosa por nombre en
+  // conversions/conversion_values, no en actions/action_values.
+  cur.conversions += sumActions(conversionOverride ? r.conversions : r.actions);
+  cur.conversions_value += sumActions(conversionOverride ? r.conversion_values : r.action_values);
   cur.frequency = num(r.frequency);
   byAdDate.set(key, cur);
 }

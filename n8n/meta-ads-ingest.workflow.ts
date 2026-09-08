@@ -69,9 +69,16 @@
  *     tenga un valor para ese cliente, en cuyo caso se usa SOLO ese
  *     action_type (su conversión personalizada real) en vez del genérico.
  *     Caso real: Grupo Dani García (Lena Ibiza / Lobito de Mar) factura por
- *     reservas, no por "lead" genérico de Meta — su action_type es
- *     "offsite_conversion.custom.<id de la Custom Conversion>", que cuenta
- *     solo reservas reales en vez de cualquier apertura de formulario.
+ *     reservas, no por "lead" genérico de Meta. Su evento real es un evento
+ *     de píxel personalizado "en crudo" (promoted_object.custom_event_str en
+ *     el ad set, ej. "Lead_Reserva_Ibiza_Lobito"), NO un objeto Custom
+ *     Conversion formal — por eso no aparece en /customconversions ni en
+ *     actions/action_values (ahí Meta lo agrega dentro de
+ *     "offsite_conversion.fb_pixel_custom" sin desglosar). Solo se ve
+ *     desglosado por nombre en el campo `conversions`/`conversion_values`,
+ *     con action_type "offsite_conversion.fb_pixel_custom.<nombre del
+ *     evento>" — por eso el override usa ese formato y el código lee de
+ *     `conversions` en vez de `actions` cuando hay override.
  *   - Ventana de fechas: igual que Google Ads, "Elegir ventana de fechas" usa
  *     data_sources.last_sync para distinguir la primera sincronización de un
  *     cliente (todavía NULL) de las siguientes — date_preset "maximum" (todo
@@ -251,7 +258,7 @@ const fetchMetaApi = node({
       queryParameters: {
         parameters: [
           { name: 'level', value: 'campaign' },
-          { name: 'fields', value: 'campaign_id,campaign_name,spend,impressions,clicks,actions,action_values' },
+          { name: 'fields', value: 'campaign_id,campaign_name,spend,impressions,clicks,actions,action_values,conversions,conversion_values' },
           { name: 'time_increment', value: '1' },
           { name: 'date_preset', value: expr('{{ $json.datePreset }}') },
           { name: 'limit', value: '500' },
@@ -277,7 +284,7 @@ const fetchMetaOauth = node({
       queryParameters: {
         parameters: [
           { name: 'level', value: 'campaign' },
-          { name: 'fields', value: 'campaign_id,campaign_name,spend,impressions,clicks,actions,action_values' },
+          { name: 'fields', value: 'campaign_id,campaign_name,spend,impressions,clicks,actions,action_values,conversions,conversion_values' },
           { name: 'time_increment', value: '1' },
           { name: 'date_preset', value: expr('{{ $json.datePreset }}') },
           { name: 'limit', value: '500' },
@@ -326,8 +333,12 @@ const rows = results.map((r) => ({
   cost: num(r.spend),
   impressions: num(r.impressions),
   clicks: num(r.clicks),
-  conversions: sumActions(r.actions),
-  conversions_value: sumActions(r.action_values),
+  // Un override apunta casi siempre a un evento de pixel "en crudo" (no un
+  // objeto Custom Conversion formal): Meta solo lo desglosa por nombre en el
+  // campo conversions/conversion_values, no en actions/action_values (ahi
+  // solo aparece agregado dentro de "offsite_conversion.fb_pixel_custom").
+  conversions: sumActions(conversionOverride ? r.conversions : r.actions),
+  conversions_value: sumActions(conversionOverride ? r.conversion_values : r.action_values),
 }));
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'meta-ads';";
 if (rows.length === 0) {
