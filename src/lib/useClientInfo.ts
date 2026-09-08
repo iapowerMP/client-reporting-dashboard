@@ -30,6 +30,10 @@ export interface ClientInfo {
    * visibles por defecto). Guardado en Supabase para que sea igual para
    * cualquiera que abra el informe. */
   reportVisibility: Record<string, boolean> | null
+  /** Grupo empresarial (Configuración → "Grupo empresarial"): null si el
+   * cliente no pertenece a ninguno. `siblings` son las otras empresas del
+   * mismo grupo, para el selector de "cambiar de empresa" del sidebar. */
+  group: { id: string; name: string; siblings: Array<{ name: string; slug: string }> } | null
 }
 
 interface ClientInfoState {
@@ -72,6 +76,7 @@ export function useClientInfo(clientSlug: string) {
           reportTemplate: row.report_template === 'programmatic' ? 'programmatic' : 'standard',
           reportVisibility:
             row.report_visibility && typeof row.report_visibility === 'object' ? row.report_visibility : null,
+          group: row.group ?? null,
         },
         loading: false,
         error: null,

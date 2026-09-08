@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
+import type { ClientInfo } from '@/lib/useClientInfo'
 
 /** Título de la sección según el sufijo de ruta dentro de /c/:clientSlug/... */
 const ROUTE_TITLES: Record<string, string> = {
@@ -19,12 +20,14 @@ export default function Layout({
   clientName,
   logoUrl,
   reportTemplate = 'standard',
+  group = null,
 }: {
   children: ReactNode
   clientSlug: string
   clientName?: string
   logoUrl?: string | null
   reportTemplate?: 'standard' | 'programmatic'
+  group?: ClientInfo['group']
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { pathname } = useLocation()
@@ -38,6 +41,8 @@ export default function Layout({
         clientName={clientName}
         logoUrl={logoUrl}
         reportTemplate={reportTemplate}
+        group={group}
+        currentSuffix={suffix}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />

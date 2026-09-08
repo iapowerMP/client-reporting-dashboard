@@ -4,18 +4,26 @@
  *                       pantalla de selección inicial.
  * GET ?slug=<slug>  -> un único cliente con todos sus campos (incluye
  *                       website y logo_url), para precargar Configuración.
+ *                       Si pertenece a un grupo empresarial, incluye
+ *                       group: { id, name, siblings: [{name, slug}] }.
+ * GET ?groups=1     -> lista los grupos empresariales existentes (id, name),
+ *                       para el desplegable de Configuración.
  * POST { name, sector?, website? } -> crea un cliente nuevo, generando un
  *         slug único a partir del nombre, y lo devuelve. Ese slug es el que
  *         identifica al cliente en la URL (/c/<slug>/...).
  * PATCH { client, name?, sector?, website?, logoUrl?, businessType?,
  *          cplTarget?, leadsTargetMonthly?, roasTarget?, revenueTargetMonthly?,
- *          reportVisibility?, password?, removePassword? }
+ *          reportVisibility?, groupId?, newGroupName?, password?, removePassword? }
  *         -> actualiza los datos del cliente (identificado por su slug actual).
  *         Si cambia el nombre, el slug (y por tanto la URL /c/<slug>/...) se
  *         regenera a partir del nuevo nombre. Si el cliente ya tiene
  *         contraseña activada, el PATCH exige el token de sesión (Authorization:
  *         Bearer <token>, emitido por /api/verify-access) para poder aplicar
  *         cualquier cambio, incluida la propia contraseña.
+ *         groupId: une el cliente a un grupo ya existente ('' lo saca del
+ *         grupo). newGroupName: crea un grupo nuevo (o reutiliza uno con el
+ *         mismo nombre, sin distinguir mayúsculas) y une el cliente a él —
+ *         tiene prioridad sobre groupId si se envían ambos.
  */
 import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'crypto'
 
@@ -71,10 +79,25 @@ async function handleRequest(req: any, res: any) {
 
   if (req.method === 'GET') {
     const slug = typeof req.query?.slug === 'string' ? req.query.slug : ''
+    const wantsGroups = req.query?.groups === '1'
+
+    if (wantsGroups) {
+      try {
+        const resp = await fetch(`${SUPABASE_URL}/rest/v1/client_groups?select=id,name&order=name.asc`, { headers })
+        if (!resp.ok) {
+          res.status(502).json({ error: `Supabase respondió ${resp.status} al leer client_groups.` })
+          return
+        }
+        res.status(200).json({ groups: await resp.json() })
+      } catch {
+        res.status(502).json({ error: 'No se pudo leer client_groups desde Supabase.' })
+      }
+      return
+    }
 
     if (slug) {
       try {
-        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type,cpl_target,leads_target_monthly,roas_target,revenue_target_monthly,report_template,report_visibility`
+        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type,cpl_target,leads_target_monthly,roas_target,revenue_target_monthly,report_template,report_visibility,group_id`
         const resp = await fetch(url, { headers })
         if (!resp.ok) {
           res.status(502).json({ error: `Supabase respondió ${resp.status} al leer clients.` })
@@ -85,8 +108,24 @@ async function handleRequest(req: any, res: any) {
           res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
           return
         }
-        const { access_password_hash, ...publicRow } = row
-        res.status(200).json({ client: { ...publicRow, hasPassword: !!access_password_hash } })
+        const { access_password_hash, group_id, ...publicRow } = row
+
+        let group = null
+        if (group_id) {
+          const [groupResp, siblingsResp] = await Promise.all([
+            fetch(`${SUPABASE_URL}/rest/v1/client_groups?id=eq.${group_id}&select=id,name`, { headers }),
+            fetch(
+              `${SUPABASE_URL}/rest/v1/clients?group_id=eq.${group_id}&id=neq.${row.id}&select=name,slug&order=name.asc`,
+              { headers },
+            ),
+          ])
+          const [groupRow] = groupResp.ok ? await groupResp.json() : []
+          if (groupRow) {
+            group = { id: groupRow.id, name: groupRow.name, siblings: siblingsResp.ok ? await siblingsResp.json() : [] }
+          }
+        }
+
+        res.status(200).json({ client: { ...publicRow, hasPassword: !!access_password_hash, group } })
       } catch {
         res.status(502).json({ error: 'No se pudo leer clients desde Supabase.' })
       }
@@ -159,6 +198,8 @@ async function handleRequest(req: any, res: any) {
       roasTarget,
       revenueTargetMonthly,
       reportVisibility,
+      groupId,
+      newGroupName,
       password,
       removePassword,
     } = req.body ?? {}
@@ -206,6 +247,45 @@ async function handleRequest(req: any, res: any) {
       updates.access_password_hash = hashPassword(password.trim())
     } else if (removePassword === true) {
       updates.access_password_hash = null
+    }
+
+    // Grupo empresarial: newGroupName crea uno nuevo (o reutiliza uno ya
+    // existente con el mismo nombre, sin distinguir mayúsculas, para no
+    // duplicar el grupo si se escribe el mismo nombre desde dos clientes
+    // distintos) y tiene prioridad sobre groupId si llegan los dos.
+    if (typeof newGroupName === 'string' && newGroupName.trim()) {
+      const trimmedName = newGroupName.trim()
+      try {
+        const existingResp = await fetch(
+          `${SUPABASE_URL}/rest/v1/client_groups?name=ilike.${encodeURIComponent(trimmedName)}&select=id`,
+          { headers },
+        )
+        if (!existingResp.ok) {
+          res.status(502).json({ error: `Supabase respondió ${existingResp.status} al comprobar el grupo.` })
+          return
+        }
+        const [existingGroup] = await existingResp.json()
+        if (existingGroup) {
+          updates.group_id = existingGroup.id
+        } else {
+          const createResp = await fetch(`${SUPABASE_URL}/rest/v1/client_groups`, {
+            method: 'POST',
+            headers: { ...headers, Prefer: 'return=representation' },
+            body: JSON.stringify([{ name: trimmedName }]),
+          })
+          if (!createResp.ok) {
+            res.status(502).json({ error: `Supabase respondió ${createResp.status} al crear el grupo.` })
+            return
+          }
+          const [newGroup] = await createResp.json()
+          updates.group_id = newGroup.id
+        }
+      } catch {
+        res.status(502).json({ error: 'No se pudo crear el grupo en Supabase.' })
+        return
+      }
+    } else if (typeof groupId === 'string') {
+      updates.group_id = groupId.trim() || null
     }
 
     if (Object.keys(updates).length === 0) {

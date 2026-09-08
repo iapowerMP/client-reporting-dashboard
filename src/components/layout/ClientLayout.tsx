@@ -59,6 +59,7 @@ export default function ClientLayout() {
           clientName={clientInfo.data?.name}
           logoUrl={clientInfo.data?.logoUrl}
           reportTemplate={reportTemplate}
+          group={clientInfo.data?.group ?? null}
         >
           <Outlet context={clientInfo} />
         </Layout>
