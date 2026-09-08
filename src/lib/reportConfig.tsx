@@ -2,23 +2,22 @@ import {
   createContext,
   useContext,
   useState,
-  useEffect,
+  useCallback,
   useMemo,
+  useRef,
   type ReactNode,
 } from 'react'
 import { CONNECTION_CATALOG } from '@/data/catalog'
+import { authHeaders } from '@/lib/authToken'
 
 /**
  * Configuración del informe: controla qué fuentes de datos (plataformas)
- * son visibles en el dashboard. El estado se persiste en localStorage para
- * que las preferencias del usuario sobrevivan a recargas.
+ * son visibles en el dashboard. Se guarda en Supabase (clients.report_
+ * visibility) en vez de localStorage: así la ve igual cualquiera que abra
+ * el informe, no solo quien la configuró en su propio navegador.
  */
 
 type VisibilityMap = Record<string, boolean>
-
-/** Cada cliente tiene su propia preferencia, para no mezclarlas en un
- * deployment compartido por varios clientes. */
-const storageKey = (clientSlug: string) => `mp-report-visibility:${clientSlug}`
 
 /** Por defecto todas las conexiones del catálogo son visibles; el PM las
  * oculta manualmente si no quiere mostrarlas en el informe (independiente de
@@ -43,37 +42,46 @@ const ReportConfigContext = createContext<ReportConfigValue | null>(null)
 export function ReportConfigProvider({
   children,
   clientSlug,
+  initialVisibility,
 }: {
   children: ReactNode
   clientSlug: string
+  /** Preferencias ya guardadas en Supabase (clients.report_visibility),
+   * cargadas por ClientLayout antes de montar este provider; null si el
+   * cliente todavía no tiene ninguna guardada. */
+  initialVisibility: VisibilityMap | null
 }) {
-  const [visibility, setVisibility] = useState<VisibilityMap>(() => {
-    const defaults = defaultVisibility()
-    try {
-      const raw = localStorage.getItem(storageKey(clientSlug))
-      if (raw) return { ...defaults, ...(JSON.parse(raw) as VisibilityMap) }
-    } catch {
-      /* almacenamiento no disponible: usar defaults */
-    }
-    return defaults
-  })
+  const [visibility, setVisibility] = useState<VisibilityMap>(() => ({
+    ...defaultVisibility(),
+    ...(initialVisibility ?? {}),
+  }))
+  const latestRef = useRef(visibility)
+  latestRef.current = visibility
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(storageKey(clientSlug), JSON.stringify(visibility))
-    } catch {
-      /* ignorar errores de escritura */
-    }
-  }, [clientSlug, visibility])
+  const persist = useCallback(
+    (map: VisibilityMap) => {
+      fetch('/api/clients', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        body: JSON.stringify({ client: clientSlug, reportVisibility: map }),
+      }).catch(() => {
+        /* si falla el guardado, el cambio queda solo en esta sesión */
+      })
+    },
+    [clientSlug],
+  )
 
   const value = useMemo<ReportConfigValue>(
     () => ({
       visibility,
       isVisible: (id) => visibility[id] ?? false,
-      setVisible: (id, val) =>
-        setVisibility((prev) => ({ ...prev, [id]: val })),
+      setVisible: (id, val) => {
+        const next = { ...latestRef.current, [id]: val }
+        setVisibility(next)
+        persist(next)
+      },
     }),
-    [visibility],
+    [visibility, persist],
   )
 
   return (

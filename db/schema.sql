@@ -303,6 +303,17 @@ create index if not exists idx_youtube_daily_client_date
 alter table clients add column if not exists report_template text not null default 'standard';
 
 -- ----------------------------------------------------------------------------
+--  Visibilidad de fuentes de datos en el informe (Configuración → toggle
+--  "Mostrar en el informe" por conexión). Antes vivía solo en localStorage
+--  del navegador de quien la tocaba, así que cualquier otra persona que
+--  abriera el mismo informe veía todas las pestañas por defecto. Guardado en
+--  Supabase para que sea la misma para cualquiera que abra el informe.
+--  Formato: { "<connection_id>": true|false, ... } (ids de CONNECTION_CATALOG
+--  en src/data/catalog.ts); una clave ausente se trata como visible.
+-- ----------------------------------------------------------------------------
+alter table clients add column if not exists report_visibility jsonb;
+
+-- ----------------------------------------------------------------------------
 --  Publicidad programática (Oniad u otro DSP) — importación manual desde
 --  Excel. Una fila por día+campaña+sitio+creatividad, tal cual la exporta el
 --  DSP (impressions/visible_impressions/clicks/cost/viewability/reach/

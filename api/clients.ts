@@ -9,7 +9,7 @@
  *         identifica al cliente en la URL (/c/<slug>/...).
  * PATCH { client, name?, sector?, website?, logoUrl?, businessType?,
  *          cplTarget?, leadsTargetMonthly?, roasTarget?, revenueTargetMonthly?,
- *          password?, removePassword? }
+ *          reportVisibility?, password?, removePassword? }
  *         -> actualiza los datos del cliente (identificado por su slug actual).
  *         Si cambia el nombre, el slug (y por tanto la URL /c/<slug>/...) se
  *         regenera a partir del nuevo nombre. Si el cliente ya tiene
@@ -74,7 +74,7 @@ async function handleRequest(req: any, res: any) {
 
     if (slug) {
       try {
-        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type,cpl_target,leads_target_monthly,roas_target,revenue_target_monthly,report_template`
+        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type,cpl_target,leads_target_monthly,roas_target,revenue_target_monthly,report_template,report_visibility`
         const resp = await fetch(url, { headers })
         if (!resp.ok) {
           res.status(502).json({ error: `Supabase respondió ${resp.status} al leer clients.` })
@@ -158,6 +158,7 @@ async function handleRequest(req: any, res: any) {
       leadsTargetMonthly,
       roasTarget,
       revenueTargetMonthly,
+      reportVisibility,
       password,
       removePassword,
     } = req.body ?? {}
@@ -166,7 +167,7 @@ async function handleRequest(req: any, res: any) {
       return
     }
 
-    const updates: Record<string, string | number | null> = {}
+    const updates: Record<string, string | number | null | Record<string, boolean>> = {}
     if (typeof name === 'string' && name.trim()) updates.name = name.trim()
     if (typeof sector === 'string') updates.sector = sector.trim() || null
     if (typeof website === 'string') updates.website = website.trim() || null
@@ -193,6 +194,13 @@ async function handleRequest(req: any, res: any) {
     for (const [value, column] of targetFields) {
       const parsed = parseTarget(value)
       if (parsed !== undefined) updates[column] = parsed
+    }
+    if (reportVisibility && typeof reportVisibility === 'object' && !Array.isArray(reportVisibility)) {
+      const sanitized: Record<string, boolean> = {}
+      for (const [id, val] of Object.entries(reportVisibility as Record<string, unknown>)) {
+        if (typeof val === 'boolean') sanitized[id] = val
+      }
+      updates.report_visibility = sanitized
     }
     if (typeof password === 'string' && password.trim()) {
       updates.access_password_hash = hashPassword(password.trim())

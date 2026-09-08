@@ -25,6 +25,11 @@ export interface ClientInfo {
    * conectadas normales; 'programmatic' sustituye todo el informe por el
    * apartado de publicidad programática (datos importados manualmente). */
   reportTemplate: 'standard' | 'programmatic'
+  /** Qué conexiones (por id de CONNECTION_CATALOG) se muestran en el
+   * informe — null si aún no se ha guardado ninguna preferencia (todas
+   * visibles por defecto). Guardado en Supabase para que sea igual para
+   * cualquiera que abra el informe. */
+  reportVisibility: Record<string, boolean> | null
 }
 
 interface ClientInfoState {
@@ -65,6 +70,8 @@ export function useClientInfo(clientSlug: string) {
           roasTarget: typeof row.roas_target === 'number' ? row.roas_target : null,
           revenueTargetMonthly: typeof row.revenue_target_monthly === 'number' ? row.revenue_target_monthly : null,
           reportTemplate: row.report_template === 'programmatic' ? 'programmatic' : 'standard',
+          reportVisibility:
+            row.report_visibility && typeof row.report_visibility === 'object' ? row.report_visibility : null,
         },
         loading: false,
         error: null,

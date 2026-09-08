@@ -48,7 +48,11 @@ export default function ClientLayout() {
   }
 
   return (
-    <ReportConfigProvider key={clientSlug} clientSlug={clientSlug}>
+    <ReportConfigProvider
+      key={clientSlug}
+      clientSlug={clientSlug}
+      initialVisibility={clientInfo.data?.reportVisibility ?? null}
+    >
       <DateRangeProvider key={clientSlug}>
         <Layout
           clientSlug={clientSlug}
