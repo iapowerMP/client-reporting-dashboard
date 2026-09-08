@@ -76,8 +76,18 @@ create table if not exists data_sources (
   -- el refresh token no caduca por sí solo, pero hay que canjearlo por un
   -- access token nuevo antes de cada consulta (lo hace el workflow de n8n).
   oauth_refresh_token    text,
+  -- Override por cliente de qué action_type de Meta Ads Insights cuenta como
+  -- "conversión" (columnas conversions/conversions_value de meta_campaign_daily
+  -- y meta_ad_daily) en vez del conjunto genérico (compra, lead, registro...).
+  -- Solo aplica a platform = 'meta-ads'; null = usar el conjunto genérico.
+  -- Caso real: Grupo Dani García (Lena Ibiza / Lobito de Mar) fija aquí su
+  -- Custom Conversion real de reserva ("offsite_conversion.custom.<id>") en
+  -- vez de contar cualquier lead genérico de Meta.
+  meta_conversion_action_type text,
   unique (client_id, platform)
 );
+
+alter table data_sources add column if not exists meta_conversion_action_type text;
 
 -- ----------------------------------------------------------------------------
 --  Google Ads — métricas diarias por campaña (granularidad día).
