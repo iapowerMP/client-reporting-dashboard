@@ -510,6 +510,16 @@ export default function Settings() {
   const [toast, setToast] = useState<string | null>(null)
   const [savingIds, setSavingIds] = useState<string[]>([])
   const [uploadingLogo, setUploadingLogo] = useState(false)
+  const [groups, setGroups] = useState<Array<{ id: string; name: string }>>([])
+
+  useEffect(() => {
+    fetch('/api/clients?groups=1', { headers: { Accept: 'application/json' } })
+      .then((r) => (r.ok ? r.json() : { groups: [] }))
+      .then((body) => setGroups(body.groups ?? []))
+      .catch(() => {
+        /* el desplegable simplemente queda vacío si falla */
+      })
+  }, [])
 
   const loadSources = useCallback(async () => {
     setSourcesLoading(true)
@@ -731,6 +741,9 @@ export default function Settings() {
   const clientSectorRef = useRef<HTMLInputElement>(null)
   const clientWebsiteRef = useRef<HTMLInputElement>(null)
   const clientBusinessTypeRef = useRef<HTMLSelectElement>(null)
+  const clientGroupRef = useRef<HTMLSelectElement>(null)
+  const newGroupNameRef = useRef<HTMLInputElement>(null)
+  const [creatingGroup, setCreatingGroup] = useState(false)
   const cplTargetRef = useRef<HTMLInputElement>(null)
   const leadsTargetRef = useRef<HTMLInputElement>(null)
   const roasTargetRef = useRef<HTMLInputElement>(null)
@@ -754,6 +767,11 @@ export default function Settings() {
       if (leadsTargetRef.current) payload.leadsTargetMonthly = leadsTargetRef.current.value
       if (roasTargetRef.current) payload.roasTarget = roasTargetRef.current.value
       if (revenueTargetRef.current) payload.revenueTargetMonthly = revenueTargetRef.current.value
+      if (creatingGroup) {
+        payload.newGroupName = newGroupNameRef.current?.value ?? ''
+      } else {
+        payload.groupId = clientGroupRef.current?.value ?? ''
+      }
 
       const resp = await fetch('/api/clients', {
         method: 'PATCH',
@@ -768,7 +786,12 @@ export default function Settings() {
         navigate(`/c/${newSlug}/settings`, { replace: true })
         return
       }
+      setCreatingGroup(false)
       await clientInfo.refetch()
+      fetch('/api/clients?groups=1', { headers: { Accept: 'application/json' } })
+        .then((r) => (r.ok ? r.json() : { groups: [] }))
+        .then((b) => setGroups(b.groups ?? []))
+        .catch(() => {})
       showToast('Guardado correctamente')
     } catch {
       showToast('No se pudo guardar. Revisa la configuración del servidor (Supabase).')
@@ -856,7 +879,7 @@ export default function Settings() {
       {/* Datos del cliente */}
       <ChartCard title="Datos del cliente">
         <div
-          key={`${clientData?.name ?? ''}-${clientData?.sector ?? ''}-${clientData?.website ?? ''}-${clientData?.businessType ?? ''}`}
+          key={`${clientData?.name ?? ''}-${clientData?.sector ?? ''}-${clientData?.website ?? ''}-${clientData?.businessType ?? ''}-${clientData?.group?.id ?? ''}`}
           className="grid grid-cols-1 gap-4 sm:grid-cols-2"
         >
           <Field label="Nombre del cliente" defaultValue={clientData?.name} inputRef={clientNameRef} />
@@ -878,6 +901,50 @@ export default function Settings() {
             <p className="mt-1.5 text-xs text-text-secondary">
               Cambia qué KPIs destaca Paid Media: leads y coste por lead, o
               ventas y ROAS. Guarda para ver los campos de target correspondientes.
+            </p>
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+              Grupo empresarial
+            </span>
+            {creatingGroup ? (
+              <div className="flex gap-2">
+                <input
+                  ref={newGroupNameRef}
+                  type="text"
+                  placeholder="Nombre del grupo (ej. Grupo Dani García)"
+                  className="w-full rounded-control border border-border bg-base px-3 py-2 text-sm text-white placeholder:text-text-secondary/60 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
+                />
+                <button
+                  type="button"
+                  onClick={() => setCreatingGroup(false)}
+                  className="shrink-0 rounded-control border border-border bg-base px-3 text-sm text-text-secondary hover:bg-white/5"
+                >
+                  Cancelar
+                </button>
+              </div>
+            ) : (
+              <select
+                ref={clientGroupRef}
+                defaultValue={clientData?.group?.id ?? ''}
+                onChange={(e) => {
+                  if (e.target.value === '__new__') setCreatingGroup(true)
+                }}
+                className="w-full rounded-control border border-border bg-base px-3 py-2 text-sm text-white focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
+              >
+                <option value="">Sin grupo</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+                <option value="__new__">+ Crear grupo nuevo...</option>
+              </select>
+            )}
+            <p className="mt-1.5 text-xs text-text-secondary">
+              Vincula este informe con otras empresas del mismo grupo (ej. un
+              holding con varias marcas) para poder saltar entre ellas desde
+              el menú lateral. Guarda para aplicar el cambio.
             </p>
           </label>
           {clientData?.businessType === 'leadgen' && (

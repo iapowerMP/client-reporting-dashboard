@@ -352,3 +352,18 @@ create table if not exists sync_logs (
 
 create index if not exists idx_sync_logs_client
   on sync_logs (client_id, ran_at desc);
+
+-- ----------------------------------------------------------------------------
+--  Grupos empresariales (Configuración → "Grupo empresarial"): permiten
+--  saltar de un informe a otro desde el sidebar cuando varias empresas
+--  pertenecen al mismo grupo (ej. Grupo Dani García → Lena Ibiza + Lobito de
+--  Mar). Cada cliente pertenece a lo sumo a un grupo; un grupo puede tener
+--  cualquier número de clientes.
+-- ----------------------------------------------------------------------------
+create table if not exists client_groups (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table clients add column if not exists group_id uuid references client_groups(id);

@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom'
+import { useState } from 'react'
+import { NavLink, Link } from 'react-router-dom'
 import {
   LayoutDashboard,
   DollarSign,
@@ -7,6 +8,8 @@ import {
   Settings,
   Radar,
   X,
+  Building2,
+  ChevronDown,
   type LucideIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -16,6 +19,7 @@ import {
   SEO_TAB_TO_CONNECTION,
   SOCIAL_TAB_TO_CONNECTION,
 } from '@/data/catalog'
+import type { ClientInfo } from '@/lib/useClientInfo'
 
 type Category = 'paid' | 'seo' | 'social'
 
@@ -47,15 +51,31 @@ interface SidebarProps {
   clientName?: string
   logoUrl?: string | null
   reportTemplate?: 'standard' | 'programmatic'
+  /** Grupo empresarial (Configuración → "Grupo empresarial"), si el cliente
+   * pertenece a uno — muestra un selector para saltar a las otras empresas. */
+  group?: ClientInfo['group']
+  /** Sufijo de ruta actual (ej. '/paid'), para mantener la misma sección al
+   * saltar a otra empresa del grupo. */
+  currentSuffix?: string
   /** Estado del overlay en móvil. */
   open: boolean
   onClose: () => void
 }
 
-export default function Sidebar({ clientSlug, clientName, logoUrl, reportTemplate = 'standard', open, onClose }: SidebarProps) {
+export default function Sidebar({
+  clientSlug,
+  clientName,
+  logoUrl,
+  reportTemplate = 'standard',
+  group = null,
+  currentSuffix = '',
+  open,
+  onClose,
+}: SidebarProps) {
   const base = `/c/${clientSlug}`
   const displayName = clientName || clientSlug.replace(/-/g, ' ')
   const { isVisible } = useReportConfig()
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false)
 
   const categoryHasSource: Record<Category, boolean> = {
     paid: Object.values(PAID_TAB_TO_CONNECTION).some(isVisible),
@@ -105,9 +125,43 @@ export default function Sidebar({ clientSlug, clientName, logoUrl, reportTemplat
                 {displayName}
               </span>
             </div>
-            <p className="mt-1 pl-9 text-xs text-text-secondary">
-              Reporting Dashboard
-            </p>
+            {group ? (
+              <div className="relative mt-1 pl-9">
+                <button
+                  onClick={() => setGroupMenuOpen((v) => !v)}
+                  className="flex items-center gap-1 text-xs text-text-secondary hover:text-white"
+                >
+                  <Building2 className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{group.name}</span>
+                  <ChevronDown className="h-3 w-3 shrink-0" />
+                </button>
+                {groupMenuOpen && (
+                  <div className="absolute left-9 top-full z-50 mt-1 w-56 rounded-control border border-border bg-card py-1 shadow-lg">
+                    <p className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-text-secondary">
+                      {group.name}
+                    </p>
+                    <p className="px-3 py-1.5 text-sm font-medium text-white">{displayName} (actual)</p>
+                    {group.siblings.map((s) => (
+                      <Link
+                        key={s.slug}
+                        to={`/c/${s.slug}${currentSuffix}`}
+                        onClick={() => {
+                          setGroupMenuOpen(false)
+                          onClose()
+                        }}
+                        className="block px-3 py-1.5 text-sm text-text-secondary hover:bg-white/5 hover:text-white"
+                      >
+                        {s.name}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="mt-1 pl-9 text-xs text-text-secondary">
+                Reporting Dashboard
+              </p>
+            )}
           </div>
           <button
             onClick={onClose}
