@@ -38,7 +38,8 @@
  *     con un único campo simple. Revisar si se necesita más precisión.
  *   - `conversions`/`conversions_value` usan el mismo conjunto acotado de
  *     action_types que "CRD - Meta Ads to Supabase" (compra, lead, registro
- *     completado...).
+ *     completado...), salvo que data_sources.meta_conversion_action_type
+ *     tenga un override para ese cliente — mismo mecanismo, ver ese workflow.
  *   - Sin paginación: suficiente para <500 anuncios por cliente. En la
  *     primera sincronización, date_preset "maximum" a nivel de anuncio (con
  *     desglose diario) puede ser una consulta demasiado pesada para Meta en
@@ -160,13 +161,22 @@ const lookupAccount = node({
       resource: 'database',
       operation: 'executeQuery',
       query:
-        "SELECT ds.client_id, ds.external_id AS ad_account_id, ds.auth_method, ds.oauth_access_token, (SELECT COUNT(*) FROM meta_ad_daily m WHERE m.client_id = ds.client_id) AS ad_history_count FROM data_sources ds WHERE ds.client_id = $1::uuid AND ds.platform = 'meta-ads'",
+        "SELECT ds.client_id, ds.external_id AS ad_account_id, ds.auth_method, ds.oauth_access_token, ds.meta_conversion_action_type, (SELECT COUNT(*) FROM meta_ad_daily m WHERE m.client_id = ds.client_id) AS ad_history_count FROM data_sources ds WHERE ds.client_id = $1::uuid AND ds.platform = 'meta-ads'",
       options: { queryReplacement: expr('{{ $json.client_id }}') },
     },
     credentials: { postgres: newCredential('Supabase Postgres') },
     position: [900, 300],
   },
-  output: [{ client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null, ad_history_count: 0 }],
+  output: [
+    {
+      client_id: '',
+      ad_account_id: '',
+      auth_method: 'api',
+      oauth_access_token: null,
+      meta_conversion_action_type: null,
+      ad_history_count: 0,
+    },
+  ],
 })
 
 // Primera sincronización de este cliente (meta_ad_daily todavía vacía para
@@ -186,7 +196,16 @@ return { json: { ...$json, datePreset: isFirstSync ? 'maximum' : 'last_30d', isF
     position: [1000, 300],
   },
   output: [
-    { client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null, ad_history_count: 0, datePreset: 'last_30d', isFirstSync: false },
+    {
+      client_id: '',
+      ad_account_id: '',
+      auth_method: 'api',
+      oauth_access_token: null,
+      meta_conversion_action_type: null,
+      ad_history_count: 0,
+      datePreset: 'last_30d',
+      isFirstSync: false,
+    },
   ],
 })
 
@@ -337,12 +356,15 @@ const transformApi = node({
       language: 'javaScript',
       jsCode: `const clientId = $('Buscar cuenta y credencial (creatividades)').item.json.client_id;
 const adAccountId = $('Buscar cuenta y credencial (creatividades)').item.json.ad_account_id;
+const conversionOverride = $('Buscar cuenta y credencial (creatividades)').item.json.meta_conversion_action_type;
 const insights = ($('Insights de anuncios (API)').item.json || {}).data || [];
 const formatResp = $json || {};
 const formatRows = formatResp.data || [];
 const esc = (v) => "'" + String(v).replace(/'/g, "''") + "'";
 const num = (v) => (v === undefined || v === null || v === '' ? 0 : Number(v));
-const CONVERSION_TYPES = new Set(['purchase', 'omni_purchase', 'lead', 'omni_lead', 'complete_registration', 'omni_complete_registration', 'submit_application']);
+const CONVERSION_TYPES = conversionOverride
+  ? new Set([conversionOverride])
+  : new Set(['purchase', 'omni_purchase', 'lead', 'omni_lead', 'complete_registration', 'omni_complete_registration', 'submit_application']);
 const sumActions = (actions) => Array.isArray(actions) ? actions.filter((a) => CONVERSION_TYPES.has(a.action_type)).reduce((s, a) => s + num(a.value), 0) : 0;
 const OBJECT_TYPE_TO_FORMAT = { VIDEO: 'video', PHOTO: 'imagen', SHARE: 'imagen', LINK: 'imagen', MULTI_SHARE: 'carrusel', STATUS: 'otro' };
 const formatByAdId = new Map();
@@ -403,12 +425,15 @@ const transformOauth = node({
       language: 'javaScript',
       jsCode: `const clientId = $('Buscar cuenta y credencial (creatividades)').item.json.client_id;
 const adAccountId = $('Buscar cuenta y credencial (creatividades)').item.json.ad_account_id;
+const conversionOverride = $('Buscar cuenta y credencial (creatividades)').item.json.meta_conversion_action_type;
 const insights = ($('Insights de anuncios (login)').item.json || {}).data || [];
 const formatResp = $json || {};
 const formatRows = formatResp.data || [];
 const esc = (v) => "'" + String(v).replace(/'/g, "''") + "'";
 const num = (v) => (v === undefined || v === null || v === '' ? 0 : Number(v));
-const CONVERSION_TYPES = new Set(['purchase', 'omni_purchase', 'lead', 'omni_lead', 'complete_registration', 'omni_complete_registration', 'submit_application']);
+const CONVERSION_TYPES = conversionOverride
+  ? new Set([conversionOverride])
+  : new Set(['purchase', 'omni_purchase', 'lead', 'omni_lead', 'complete_registration', 'omni_complete_registration', 'submit_application']);
 const sumActions = (actions) => Array.isArray(actions) ? actions.filter((a) => CONVERSION_TYPES.has(a.action_type)).reduce((s, a) => s + num(a.value), 0) : 0;
 const OBJECT_TYPE_TO_FORMAT = { VIDEO: 'video', PHOTO: 'imagen', SHARE: 'imagen', LINK: 'imagen', MULTI_SHARE: 'carrusel', STATUS: 'otro' };
 const formatByAdId = new Map();

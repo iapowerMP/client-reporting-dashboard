@@ -65,8 +65,13 @@
  *     devuelve el estado de la campaña (activa/pausada), solo métricas.
  *   - `conversions`/`conversions_value` se calculan sumando un conjunto
  *     acotado de action_types típicos de conversión (compra, lead, registro
- *     completado...). Puede afinarse por cliente según su evento de
- *     conversión real.
+ *     completado...) — salvo que data_sources.meta_conversion_action_type
+ *     tenga un valor para ese cliente, en cuyo caso se usa SOLO ese
+ *     action_type (su conversión personalizada real) en vez del genérico.
+ *     Caso real: Grupo Dani García (Lena Ibiza / Lobito de Mar) factura por
+ *     reservas, no por "lead" genérico de Meta — su action_type es
+ *     "offsite_conversion.custom.<id de la Custom Conversion>", que cuenta
+ *     solo reservas reales en vez de cualquier apertura de formulario.
  *   - Ventana de fechas: igual que Google Ads, "Elegir ventana de fechas" usa
  *     data_sources.last_sync para distinguir la primera sincronización de un
  *     cliente (todavía NULL) de las siguientes — date_preset "maximum" (todo
@@ -169,13 +174,15 @@ const lookupAccount = node({
       resource: 'database',
       operation: 'executeQuery',
       query:
-        "SELECT client_id, external_id AS ad_account_id, auth_method, oauth_access_token, last_sync FROM data_sources WHERE client_id = $1::uuid AND platform = 'meta-ads'",
+        "SELECT client_id, external_id AS ad_account_id, auth_method, oauth_access_token, last_sync, meta_conversion_action_type FROM data_sources WHERE client_id = $1::uuid AND platform = 'meta-ads'",
       options: { queryReplacement: expr('{{ $json.client_id }}') },
     },
     credentials: { postgres: newCredential('Supabase Postgres') },
     position: [900, 300],
   },
-  output: [{ client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null, last_sync: null }],
+  output: [
+    { client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null, last_sync: null, meta_conversion_action_type: null },
+  ],
 })
 
 // Primera sincronización de este cliente (last_sync todavía NULL) → pide todo
@@ -195,7 +202,16 @@ return { json: { ...$json, datePreset: isFirstSync ? 'maximum' : 'last_30d', isF
     position: [1000, 300],
   },
   output: [
-    { client_id: '', ad_account_id: '', auth_method: 'api', oauth_access_token: null, last_sync: null, datePreset: 'last_30d', isFirstSync: false },
+    {
+      client_id: '',
+      ad_account_id: '',
+      auth_method: 'api',
+      oauth_access_token: null,
+      last_sync: null,
+      meta_conversion_action_type: null,
+      datePreset: 'last_30d',
+      isFirstSync: false,
+    },
   ],
 })
 
@@ -288,11 +304,17 @@ const transform = node({
       language: 'javaScript',
       jsCode: `const clientId = $('Buscar cuenta y credencial').item.json.client_id;
 const adAccountId = $('Buscar cuenta y credencial').item.json.ad_account_id;
+const conversionOverride = $('Buscar cuenta y credencial').item.json.meta_conversion_action_type;
 const resp = $json || {};
 const results = resp.data || [];
 const esc = (v) => "'" + String(v).replace(/'/g, "''") + "'";
 const num = (v) => (v === undefined || v === null || v === '' ? 0 : Number(v));
-const CONVERSION_TYPES = new Set(['purchase', 'omni_purchase', 'lead', 'omni_lead', 'complete_registration', 'omni_complete_registration', 'submit_application']);
+// Por defecto, un conjunto genérico de action_types de conversión; si el
+// cliente tiene una conversión personalizada configurada (Grupo Dani García),
+// se usa SOLO esa — no los leads genéricos de Meta, que sobrecuentan.
+const CONVERSION_TYPES = conversionOverride
+  ? new Set([conversionOverride])
+  : new Set(['purchase', 'omni_purchase', 'lead', 'omni_lead', 'complete_registration', 'omni_complete_registration', 'submit_application']);
 const sumActions = (actions) => Array.isArray(actions) ? actions.filter((a) => CONVERSION_TYPES.has(a.action_type)).reduce((s, a) => s + num(a.value), 0) : 0;
 const rows = results.map((r) => ({
   client_id: clientId,
