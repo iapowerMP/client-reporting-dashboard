@@ -91,6 +91,12 @@
  *   - El token de oauth (~60 días de vida) no se refresca automáticamente
  *     todavía: si caduca o el cliente revoca el acceso, esa cuenta empezará a
  *     fallar y habrá que pedirle que pulse "Reconectar con Facebook".
+ *   - "Meta Ads insights (API)"/"(login)" tienen options.response.neverError
+ *     = true: sin esto, un solo cliente con la cuenta rota (ej. permiso
+ *     ads_management/ads_read no concedido) tira toda la ejecución en lote
+ *     abajo y ningún cliente posterior en esa misma corrida se sincroniza —
+ *     así se detectó que la sincro diaria llevaba semanas sin avanzar más
+ *     allá de la primera cuenta rota que encontraba (ver "aglaia").
  *
  * Nota: Graph API en v25.0 (vigente a jul-2026). Meta da soporte a cada
  * versión ~24 meses desde su publicación — revisar antes de oct-2026.
@@ -264,6 +270,7 @@ const fetchMetaApi = node({
           { name: 'limit', value: '500' },
         ],
       },
+      options: { response: { response: { neverError: true } } },
     },
     credentials: { httpHeaderAuth: newCredential('Meta Ads Token') },
     position: [1360, 420],
@@ -295,6 +302,7 @@ const fetchMetaOauth = node({
       headerParameters: {
         parameters: [{ name: 'Authorization', value: expr('{{ "Bearer " + $json.oauth_access_token }}') }],
       },
+      options: { response: { response: { neverError: true } } },
     },
     position: [1360, 200],
   },
