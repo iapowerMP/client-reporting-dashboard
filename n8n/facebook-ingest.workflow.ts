@@ -20,9 +20,18 @@
  *      body (la página y el token siempre se resuelven frescos en Supabase).
  *
  * Ambas rutas convergen en "Cliente Facebook" → "Buscar pagina y token"
- * (Postgres) + "Calcular rango de fechas" (últimos 30 días) → "Insights de
- * la pagina" (HTTP: page_follows/page_views_total/page_post_engagements por
- * día) → "Transformar a SQL upsert" → Postgres.
+ * (Postgres) + "Calcular rango de fechas" (últimos 30 días), y desde ahí se
+ * ramifica en dos ingestas independientes (si una falla no bloquea la otra):
+ *   A) "Insights de la pagina" (HTTP: page_follows/page_views_total/
+ *      page_post_engagements por día) → "Transformar a SQL upsert" →
+ *      Postgres — tabla facebook_page_daily.
+ *   B) "Publicaciones de la pagina" (HTTP: GET /posts — id/message/
+ *      created_time/permalink_url/shares, hasta 100 más recientes) →
+ *      "Transformar publicaciones a SQL upsert" → Postgres — tabla
+ *      facebook_posts. Esto es lo que permite un conteo real de
+ *      "Publicaciones" en el dashboard (antes fijo a 0). likes/comments por
+ *      publicación quedan fuera por ahora: ese edge exige la feature "Page
+ *      Public Content Access" de Meta (revisión de app aparte, pendiente).
  *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con Facebook", "Buscar pagina y
@@ -260,6 +269,77 @@ const upsert = node({
   output: [{}],
 })
 
+const fetchPosts = node({
+  type: 'n8n-nodes-base.httpRequest',
+  version: 4.4,
+  config: {
+    name: 'Publicaciones de la pagina',
+    parameters: {
+      method: 'GET',
+      url: expr('{{ "https://graph.facebook.com/v25.0/" + $("Buscar pagina y token").item.json.page_id + "/posts" }}'),
+      sendQuery: true,
+      specifyQuery: 'keypair',
+      queryParameters: {
+        parameters: [
+          { name: 'fields', value: 'id,message,created_time,permalink_url,shares' },
+          { name: 'limit', value: '100' },
+          { name: 'access_token', value: expr('{{ $("Buscar pagina y token").item.json.oauth_access_token }}') },
+        ],
+      },
+      options: { response: { response: { neverError: true } } },
+    },
+    position: [1340, 500],
+  },
+  output: [{ data: [] }],
+})
+
+const transformPosts = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Transformar publicaciones a SQL upsert',
+    parameters: {
+      mode: 'runOnceForEachItem',
+      language: 'javaScript',
+      jsCode: `const clientId = $('Buscar pagina y token').item.json.client_id;
+const pageId = $('Buscar pagina y token').item.json.page_id;
+const resp = $json || {};
+const posts = resp.data || [];
+const esc = (v) => "'" + String(v).replace(/'/g, "''") + "'";
+const num = (v) => (v === undefined || v === null ? 0 : Number(v));
+if (posts.length === 0) {
+  return { json: { query: 'SELECT 1;', rowCount: 0 } };
+}
+const values = posts.map((p) => {
+  const created = p.created_time ? esc(p.created_time) + '::timestamptz' : 'null';
+  const message = p.message ? esc(p.message) : 'null';
+  const permalink = p.permalink_url ? esc(p.permalink_url) : 'null';
+  const shares = num((p.shares || {}).count);
+  return '(' + esc(clientId) + '::uuid, ' + esc(pageId) + ', ' + esc(p.id) + ', ' + created + ', ' + message + ', ' + permalink + ', ' + shares + ')';
+}).join(',');
+const upsertQuery =
+  'INSERT INTO facebook_posts (client_id, page_id, post_id, created_time, message, permalink_url, shares) VALUES ' +
+  values +
+  ' ON CONFLICT (client_id, post_id) DO UPDATE SET page_id = EXCLUDED.page_id, created_time = EXCLUDED.created_time, message = EXCLUDED.message, permalink_url = EXCLUDED.permalink_url, shares = EXCLUDED.shares, updated_at = now();';
+return { json: { query: upsertQuery, rowCount: posts.length } };`,
+    },
+    position: [1780, 500],
+  },
+  output: [{ query: '', rowCount: 0 }],
+})
+
+const upsertPosts = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Upsert publicaciones en Supabase',
+    parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [2000, 500],
+  },
+  output: [{}],
+})
+
 export default workflow('facebook-ingest', 'CRD - Facebook Page to Supabase (ingesta diaria, multi-cliente)')
   .add(scheduleTrigger)
   .to(getClients)
@@ -272,3 +352,7 @@ export default workflow('facebook-ingest', 'CRD - Facebook Page to Supabase (ing
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
   .to(mergePoint)
+  .add(dateRange)
+  .to(fetchPosts)
+  .to(transformPosts)
+  .to(upsertPosts)

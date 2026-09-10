@@ -270,6 +270,27 @@ create table if not exists facebook_page_daily (
 create index if not exists idx_facebook_page_daily_client_date
   on facebook_page_daily (client_id, date);
 
+-- Publicaciones reales de la Página (edge /posts, no /insights): habilita el
+-- conteo real de "Publicaciones" que antes era 0 fijo. likes/comments quedan
+-- fuera por ahora — ese edge exige la feature "Page Public Content Access"
+-- de Meta (revisión de app aparte, pendiente); shares sí viene con el token
+-- de página normal.
+create table if not exists facebook_posts (
+  id               bigint generated always as identity primary key,
+  client_id        uuid not null references clients(id) on delete cascade,
+  page_id          text,
+  post_id          text not null,
+  created_time     timestamptz,
+  message          text,
+  permalink_url    text,
+  shares           bigint not null default 0,
+  updated_at       timestamptz not null default now(),
+  unique (client_id, post_id)
+);
+
+create index if not exists idx_facebook_posts_client_date
+  on facebook_posts (client_id, created_time);
+
 create table if not exists instagram_daily (
   id               bigint generated always as identity primary key,
   client_id        uuid not null references clients(id) on delete cascade,
