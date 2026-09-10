@@ -260,9 +260,9 @@ create table if not exists facebook_page_daily (
   client_id        uuid not null references clients(id) on delete cascade,
   page_id          text,                    -- página de Facebook que originó la fila
   date             date not null,
-  followers        bigint not null default 0,   -- page_fans (snapshot)
-  impressions      bigint not null default 0,   -- page_impressions (del día)
-  engaged_users    bigint not null default 0,   -- page_engaged_users (del día)
+  followers        bigint not null default 0,   -- page_follows (del día; a diferencia de las demás redes, aquí sí es histórico real, no un snapshot repetido)
+  impressions      bigint not null default 0,   -- page_views_total (vistas de la página del día; Meta fusionó "impressions" dentro de "views" en nov-2025)
+  engaged_users    bigint not null default 0,   -- page_post_engagements (interacciones del día: like+comentario+compartir)
   updated_at       timestamptz not null default now(),
   unique (client_id, date)
 );
