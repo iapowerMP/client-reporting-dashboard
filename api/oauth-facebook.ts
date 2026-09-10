@@ -32,8 +32,14 @@ type FacebookService = 'ads' | 'page' | 'instagram'
 
 const SERVICE_CONFIG: Record<FacebookService, { scope: string; platform: string; pendingCookie: string }> = {
   ads: { scope: 'ads_read', platform: 'meta-ads', pendingCookie: 'mp_facebook_oauth_pending_ads' },
+  // read_insights no es un scope válido para el diálogo de login público
+  // (Facebook responde "Invalid Scopes: read_insights" y bloquea el login
+  // entero) aunque sí se pueda añadir a mano como tester en el Explorador de
+  // la API Graph. Para pedirlo de verdad primero hay que darlo de alta en
+  // Revisión de la aplicación → Permisos y funciones, como se hizo con
+  // ads_read/business_management. Pendiente.
   page: {
-    scope: 'pages_show_list,pages_read_engagement,read_insights',
+    scope: 'pages_show_list,pages_read_engagement',
     platform: 'facebook',
     pendingCookie: 'mp_facebook_oauth_pending_page',
   },
