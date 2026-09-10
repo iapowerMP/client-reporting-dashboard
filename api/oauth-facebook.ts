@@ -32,7 +32,11 @@ type FacebookService = 'ads' | 'page' | 'instagram'
 
 const SERVICE_CONFIG: Record<FacebookService, { scope: string; platform: string; pendingCookie: string }> = {
   ads: { scope: 'ads_read', platform: 'meta-ads', pendingCookie: 'mp_facebook_oauth_pending_ads' },
-  page: { scope: 'pages_show_list,pages_read_engagement', platform: 'facebook', pendingCookie: 'mp_facebook_oauth_pending_page' },
+  page: {
+    scope: 'pages_show_list,pages_read_engagement,read_insights',
+    platform: 'facebook',
+    pendingCookie: 'mp_facebook_oauth_pending_page',
+  },
   // instagram_basic está deprecado por Meta y hace que el diálogo de OAuth
   // rechace la petición entera (scope inválido) — Meta lo sustituyó por
   // pages_read_engagement + instagram_manage_insights, ya usados en 'page'.

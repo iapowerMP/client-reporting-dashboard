@@ -20,10 +20,9 @@
  *      body (la página y el token siempre se resuelven frescos en Supabase).
  *
  * Ambas rutas convergen en "Cliente Facebook" → "Buscar pagina y token"
- * (Postgres) → "Seguidores de la pagina" (HTTP: fan_count, snapshot actual)
- * + "Calcular rango de fechas" (últimos 30 días) → "Insights de la pagina"
- * (HTTP: page_impressions/page_engaged_users por día) → "Transformar a SQL
- * upsert" → Postgres.
+ * (Postgres) + "Calcular rango de fechas" (últimos 30 días) → "Insights de
+ * la pagina" (HTTP: page_follows/page_views_total/page_post_engagements por
+ * día) → "Transformar a SQL upsert" → Postgres.
  *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con Facebook", "Buscar pagina y
@@ -33,26 +32,30 @@
  * secreto): la URL completa se guarda solo en la variable de entorno de
  * Vercel N8N_FACEBOOK_SYNC_WEBHOOK_URL, nunca en el repo.
  *
- * Simplificaciones actuales (V1, a revisar si hace falta más precisión):
- *   - `followers` (fan_count) es un dato ACTUAL (no histórico): obtener el
- *     número de seguidores de una fecha pasada requiere el permiso "Page
- *     Public Content Access", más sensible. Mientras tanto se aplica el
- *     valor actual a todas las filas del lote de 30 días — el histórico de
- *     seguidores no es exacto día a día, solo la tendencia reciente lo es.
- *   - page_impressions/page_engaged_users ya están deprecadas por Meta (aviso
- *     de nov-2025, efectivas desde entonces): la Graph API devuelve
- *     "(#100) The value must be a valid insights metric". "Insights de la
- *     pagina" tiene options.response.neverError = true para que ese fallo no
- *     bloquee el resto de la sincronización (seguidores + last_sync siguen
- *     actualizándose); mientras tanto impressions/engaged_users quedan en 0,
- *     igual que hace ya el resto de la app cuando no hay dato real. Pendiente
- *     de sustituir por las métricas de reemplazo de Meta (parece ser la
- *     familia "views"/"page_follows") una vez confirmados los nombres exactos.
+ * Métricas (confirmadas a mano en el Explorador de la API Graph en
+ * sep-2026, tras la deprecación de Meta de nov-2025 que tumbó
+ * page_impressions/page_engaged_users/fan_count):
+ *   - followers    ← page_follows          (histórico real día a día, ya no
+ *                                            hace falta aplicar el valor
+ *                                            actual a todo el lote)
+ *   - impressions  ← page_views_total      (vistas de la página, no de
+ *                                            contenido — Meta fusionó
+ *                                            "impressions" dentro de "views")
+ *   - engaged_users ← page_post_engagements (like+comentario+compartir del
+ *                                            día, total de interacciones —
+ *                                            ya no es "usuarios únicos" como
+ *                                            la métrica vieja, pero es la
+ *                                            aproximación más cercana viva)
+ * Las columnas de Supabase conservan sus nombres originales para no romper
+ * el resto de la app; lo que cambia es de qué métrica de Meta se rellenan.
+ * "Insights de la pagina" mantiene options.response.neverError = true: si
+ * Meta vuelve a deprecar alguna de estas tres, el día se guarda con lo que
+ * falte a 0 en vez de romper toda la sincronización.
  *   - El token de página no se refresca automáticamente: si caduca o el
  *     cliente revoca el acceso, habrá que pedirle que pulse "Reconectar con
  *     Facebook".
  *
- * Nota: Graph API en v25.0 (vigente a jul-2026). Meta da soporte a cada
+ * Nota: Graph API en v25.0 (vigente a sep-2026). Meta da soporte a cada
  * versión ~24 meses desde su publicación — revisar antes de oct-2026.
  */
 import { workflow, node, trigger, newCredential, expr } from '@n8n/workflow-sdk'
@@ -171,28 +174,6 @@ return { json: { ...$json, since: toIso(start), until: toIso(end) } };`,
   output: [{ client_id: '', page_id: '', oauth_access_token: '', since: '', until: '' }],
 })
 
-const fetchFollowers = node({
-  type: 'n8n-nodes-base.httpRequest',
-  version: 4.4,
-  config: {
-    name: 'Seguidores de la pagina',
-    parameters: {
-      method: 'GET',
-      url: expr('{{ "https://graph.facebook.com/v25.0/" + $("Buscar pagina y token").item.json.page_id }}'),
-      sendQuery: true,
-      specifyQuery: 'keypair',
-      queryParameters: {
-        parameters: [
-          { name: 'fields', value: 'fan_count' },
-          { name: 'access_token', value: expr('{{ $("Buscar pagina y token").item.json.oauth_access_token }}') },
-        ],
-      },
-    },
-    position: [1340, 300],
-  },
-  output: [{ fan_count: 0 }],
-})
-
 const fetchInsights = node({
   type: 'n8n-nodes-base.httpRequest',
   version: 4.4,
@@ -205,7 +186,7 @@ const fetchInsights = node({
       specifyQuery: 'keypair',
       queryParameters: {
         parameters: [
-          { name: 'metric', value: 'page_impressions,page_engaged_users' },
+          { name: 'metric', value: 'page_follows,page_views_total,page_post_engagements' },
           { name: 'period', value: 'day' },
           { name: 'since', value: expr('{{ $("Calcular rango de fechas").item.json.since }}') },
           { name: 'until', value: expr('{{ $("Calcular rango de fechas").item.json.until }}') },
@@ -214,7 +195,7 @@ const fetchInsights = node({
       },
       options: { response: { response: { neverError: true } } },
     },
-    position: [1560, 300],
+    position: [1340, 300],
   },
   output: [{ data: [] }],
 })
@@ -229,7 +210,6 @@ const transform = node({
       language: 'javaScript',
       jsCode: `const clientId = $('Buscar pagina y token').item.json.client_id;
 const pageId = $('Buscar pagina y token').item.json.page_id;
-const followers = ($('Seguidores de la pagina').item.json || {}).fan_count || 0;
 const untilDate = $('Calcular rango de fechas').item.json.until;
 const resp = $json || {};
 const metrics = resp.data || [];
@@ -240,21 +220,22 @@ for (const m of metrics) {
   for (const v of (m.values || [])) {
     const date = String(v.end_time || '').slice(0, 10);
     if (!date) continue;
-    const cur = byDate.get(date) || { impressions: 0, engaged_users: 0 };
-    if (m.name === 'page_impressions') cur.impressions = num(v.value);
-    if (m.name === 'page_engaged_users') cur.engaged_users = num(v.value);
+    const cur = byDate.get(date) || { followers: 0, impressions: 0, engaged_users: 0 };
+    if (m.name === 'page_follows') cur.followers = num(v.value);
+    if (m.name === 'page_views_total') cur.impressions = num(v.value);
+    if (m.name === 'page_post_engagements') cur.engaged_users = num(v.value);
     byDate.set(date, cur);
   }
 }
-// Si Insights falla (metric deprecada) o no trae datos, se guarda igualmente
-// una fila con los seguidores actuales del día de hoy: mejor un snapshot de
-// seguidores real que no guardar nada por culpa de un fallo en otro dato.
+// Si Insights falla (p. ej. Meta vuelve a deprecar alguna métrica) o no trae
+// datos, se guarda igualmente una fila vacía del día de hoy: mejor un hueco
+// honesto que no guardar nada ni dejar de actualizar last_sync.
 if (byDate.size === 0) {
-  byDate.set(untilDate, { impressions: 0, engaged_users: 0 });
+  byDate.set(untilDate, { followers: 0, impressions: 0, engaged_users: 0 });
 }
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'facebook';";
 const values = Array.from(byDate.entries()).map(([date, v]) =>
-  '(' + esc(clientId) + '::uuid, ' + esc(pageId) + ', ' + esc(date) + '::date, ' + followers + ', ' + v.impressions + ', ' + v.engaged_users + ')'
+  '(' + esc(clientId) + '::uuid, ' + esc(pageId) + ', ' + esc(date) + '::date, ' + v.followers + ', ' + v.impressions + ', ' + v.engaged_users + ')'
 ).join(',');
 const upsertQuery =
   'INSERT INTO facebook_page_daily (client_id, page_id, date, followers, impressions, engaged_users) VALUES ' +
@@ -285,7 +266,6 @@ export default workflow('facebook-ingest', 'CRD - Facebook Page to Supabase (ing
   .to(mergePoint)
   .to(lookupAccount)
   .to(dateRange)
-  .to(fetchFollowers)
   .to(fetchInsights)
   .to(transform)
   .to(upsert)
