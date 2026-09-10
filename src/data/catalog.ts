@@ -613,15 +613,21 @@ export function computeSocialKpis(
     ]
   }
 
+  // Facebook ya no expone impresiones de contenido (Meta la deprecó): lo que
+  // guardamos en su lugar son visitas a la página (page_views_total), un
+  // dato distinto que merece su propia etiqueta para no confundirlo con las
+  // impresiones reales de Instagram/YouTube.
+  const impresionesLabel = tab === 'Facebook' ? 'Visitas a la página' : 'Impresiones'
+
   const s = data.find((x) => x.platform === tab)
   if (!s) {
-    return EMPTY_SOCIAL_KPIS(['Seguidores', 'Crecimiento neto', 'Alcance', 'Impresiones', 'Engagement Rate', 'Publicaciones'])
+    return EMPTY_SOCIAL_KPIS(['Seguidores', 'Crecimiento neto', 'Alcance', impresionesLabel, 'Engagement Rate', 'Publicaciones'])
   }
   return [
     { label: 'Seguidores', value: formatNumber(s.seguidores) },
     { label: 'Crecimiento neto', value: `+${formatNumber(s.crecimientoNeto)}` },
     { label: 'Alcance', value: formatNumber(s.alcance) },
-    { label: 'Impresiones', value: formatNumber(s.impresiones) },
+    { label: impresionesLabel, value: formatNumber(s.impresiones) },
     { label: 'Engagement Rate', value: formatPercent(s.engagementRate, 1) },
     { label: 'Publicaciones', value: formatNumber(s.publicaciones) },
   ]
