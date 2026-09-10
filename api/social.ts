@@ -5,10 +5,13 @@
  * espera SocialData (src/services/types.ts). TikTok todavía no tiene
  * integración real.
  *
- * Simplificación actual (V1): cada tabla solo guarda snapshots a nivel de
- * página/canal (sin desglose por publicación), así que "engagement" (likes/
- * comments/shares) y "publicaciones destacadas" se devuelven vacíos con
- * honestidad — no hay de dónde sacarlos todavía. "Alcance" solo existe para
+ * Simplificación actual (V1): Instagram/YouTube solo guardan snapshots a
+ * nivel de cuenta/canal (sin desglose por publicación). Facebook sí tiene
+ * datos por publicación (facebook_posts, vía el edge /posts) — de ahí sale
+ * el conteo real de "Publicaciones" — pero sin likes/comments individuales
+ * todavía (eso exige la feature "Page Public Content Access" de Meta,
+ * pendiente de revisión aparte), así que "engagement" y "publicaciones
+ * destacadas" se devuelven vacíos con honestidad. "Alcance" solo existe para
  * Instagram (reach); Facebook e YouTube no exponen ese dato con los scopes
  * de solo lectura usados aquí.
  */
@@ -88,6 +91,10 @@ interface YoutubeRow {
   video_count: string | number
 }
 
+interface FacebookPostRow {
+  post_id: string
+}
+
 export default async function handler(req: any, res: any) {
   try {
     await handleRequest(req, res)
@@ -142,10 +149,11 @@ async function handleRequest(req: any, res: any) {
     const instagramId = accountByPlatform.get('instagram') ?? ''
     const youtubeChannelId = accountByPlatform.get('youtube') ?? ''
 
-    const [facebookRows, instagramRows, youtubeRows] = await Promise.all([
+    const [facebookRows, instagramRows, youtubeRows, facebookPostsCount] = await Promise.all([
       fetchDaily<FacebookRow>(SUPABASE_URL, headers, 'facebook_page_daily', 'page_id', facebookPageId, client.id, dateFilters),
       fetchDaily<InstagramRow>(SUPABASE_URL, headers, 'instagram_daily', 'ig_user_id', instagramId, client.id, dateFilters),
       fetchDaily<YoutubeRow>(SUPABASE_URL, headers, 'youtube_daily', 'channel_id', youtubeChannelId, client.id, dateFilters),
+      fetchFacebookPostsCount(SUPABASE_URL, headers, facebookPageId, client.id, from, to),
     ])
 
     const stats: Array<{
@@ -168,7 +176,7 @@ async function handleRequest(req: any, res: any) {
         alcance: 0,
         impresiones,
         engagementRate: impresiones ? round2((engaged / impresiones) * 100) : 0,
-        publicaciones: 0,
+        publicaciones: facebookPostsCount,
       })
     }
 
@@ -233,8 +241,11 @@ async function handleRequest(req: any, res: any) {
         publicaciones: s.publicaciones,
       })),
       followers,
-      // Sin datos de likes/comments/shares ni de publicaciones individuales
-      // todavía: estado vacío honesto en vez de cifras inventadas.
+      // "publicaciones" (arriba) ya es un conteo real para Facebook (tabla
+      // facebook_posts). El listado de publicaciones destacadas y el
+      // engagement por like/comment siguen vacíos: ese desglose exige la
+      // feature "Page Public Content Access" de Meta (revisión de app
+      // aparte, pendiente) — estado vacío honesto en vez de inventarlo.
       engagement: [],
       reach,
       posts: [],
@@ -260,4 +271,21 @@ async function fetchDaily<T>(
   const resp = await fetch(`${supabaseUrl}/rest/v1/${table}?${query.toString()}`, { headers })
   if (!resp.ok) throw new Error(`Supabase respondió ${resp.status} al consultar ${table}.`)
   return (await resp.json()) as T[]
+}
+
+async function fetchFacebookPostsCount(
+  supabaseUrl: string,
+  headers: Record<string, string>,
+  pageId: string,
+  clientId: string,
+  from: string,
+  to: string,
+): Promise<number> {
+  if (!pageId) return 0
+  const query = new URLSearchParams({ client_id: `eq.${clientId}`, page_id: `eq.${pageId}`, select: 'post_id' })
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('created_time', `gte.${from}`)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('created_time', `lte.${to}T23:59:59`)
+  const resp = await fetch(`${supabaseUrl}/rest/v1/facebook_posts?${query.toString()}`, { headers })
+  if (!resp.ok) return 0
+  return ((await resp.json()) as FacebookPostRow[]).length
 }
