@@ -266,6 +266,11 @@ async function handleStart(req: any, res: any) {
     state,
     scope: SERVICE_CONFIG[service].scope,
     response_type: 'code',
+    // Sin esto, Facebook reutiliza en silencio el consentimiento previo y
+    // nunca vuelve a mostrar el diálogo de permisos para alguien que ya
+    // había conectado antes — así que un scope nuevo (p. ej. read_insights)
+    // nunca llega a pedirse de verdad aunque el usuario pulse "Reconectar".
+    auth_type: 'rerequest',
   })
   res.writeHead(302, { Location: `https://www.facebook.com/v25.0/dialog/oauth?${params.toString()}` })
   res.end()
