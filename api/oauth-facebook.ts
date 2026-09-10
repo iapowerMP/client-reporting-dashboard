@@ -47,10 +47,6 @@ const STATE_TTL_MS = 10 * 60 * 1000
 const PENDING_TTL_S = 10 * 60
 const LONG_LIVED_TOKEN_TTL_S = 60 * 24 * 60 * 60 // Meta emite el token de larga duración con ~60 días de vida.
 
-// Diagnóstico temporal para el caso abierto de "The Media Power Agency" —
-// ver el comentario en handleAccounts. Quitar junto con ese bloque.
-const TROUBLESHOOT_PAGE_ID = '105089828061313'
-
 interface FacebookPage {
   id: string
   name: string
@@ -378,12 +374,7 @@ async function handleAccounts(req: any, res: any) {
     }
 
     // service === 'page' | 'instagram' — ambas parten de la lista de páginas.
-    const { pages, requests, lastPaging } = await fetchAllFacebookPages(token)
-    // Diagnóstico temporal (quitar cuando se cierre el caso de "The Media
-    // Power Agency"): cuántas peticiones hicieron falta para agotar la
-    // paginación y qué trae paging en la última, para ver si Facebook deja
-    // de mandar más páginas antes de lo esperado.
-    const debugMeta = { pagesFetched: pages.length, requests, lastPaging }
+    const { pages } = await fetchAllFacebookPages(token)
 
     // Diagnóstico: si Facebook no devuelve ninguna página pese a que la
     // cuenta sí las administra, casi siempre es porque el token no llegó a
@@ -402,39 +393,13 @@ async function handleAccounts(req: any, res: any) {
         pagesShowList?.status === 'granted'
           ? 'El permiso pages_show_list está concedido pero Facebook no devolvió ninguna página: revisa que la página tenga "acceso de Facebook" activado para esta cuenta en Business Manager (no solo acceso de tarea/empleado).'
           : `El permiso pages_show_list no quedó concedido en el inicio de sesión (estado: ${pagesShowList?.status ?? 'no solicitado'}). Vuelve a pulsar "Conectar con Facebook" y, en el diálogo de Facebook, revisa/activa manualmente las páginas en el paso de selección de páginas antes de continuar.`
-      res.status(200).json({ accounts: [], diagnostic: detail, debugMeta })
+      res.status(200).json({ accounts: [], diagnostic: detail })
       return
     }
 
     if (service === 'page') {
       const accounts = pages.map((p) => ({ id: p.id, name: p.name }))
-
-      // Diagnóstico dirigido temporal: "The Media Power Agency" (id
-      // conocido) sigue sin aparecer aunque se seleccione ella sola en el
-      // diálogo de Facebook (se ha descartado que sea un tema de paginación
-      // ni de acceso en Business Manager). Se pide directamente por su ID
-      // para capturar el error real de Facebook. Quitar en cuanto se cierre
-      // el caso.
-      if (!accounts.some((a) => a.id === TROUBLESHOOT_PAGE_ID)) {
-        const pageResp = await fetch(
-          `https://graph.facebook.com/v25.0/${TROUBLESHOOT_PAGE_ID}?${new URLSearchParams({
-            fields: 'name,access_token',
-            access_token: token,
-          }).toString()}`,
-        )
-        const pageBody = (await pageResp.json()) as {
-          name?: string
-          access_token?: string
-          error?: { message: string; type?: string; code?: number; error_subcode?: number }
-        }
-        const diagnostic = pageResp.ok
-          ? `Facebook sí devuelve datos de "${pageBody.name}" al pedirla directamente (id ${TROUBLESHOOT_PAGE_ID}, ¿trae access_token de página?: ${!!pageBody.access_token}), pero no la incluye en /me/accounts.`
-          : `Facebook devuelve este error al pedir directamente The Media Power Agency (id ${TROUBLESHOOT_PAGE_ID}): "${pageBody.error?.message}"${pageBody.error?.code ? ` (código ${pageBody.error.code}${pageBody.error.error_subcode ? `.${pageBody.error.error_subcode}` : ''}${pageBody.error.type ? `, tipo ${pageBody.error.type}` : ''})` : ''}.`
-        res.status(200).json({ accounts, diagnostic, debugMeta })
-        return
-      }
-
-      res.status(200).json({ accounts, debugMeta })
+      res.status(200).json({ accounts })
       return
     }
 
@@ -446,7 +411,7 @@ async function handleAccounts(req: any, res: any) {
         name: `@${p.instagram_business_account!.username} (${p.name})`,
         pageId: p.id,
       }))
-    res.status(200).json({ accounts, debugMeta })
+    res.status(200).json({ accounts })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudieron listar las cuentas de Facebook.' })
   }
