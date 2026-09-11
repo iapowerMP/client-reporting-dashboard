@@ -579,6 +579,10 @@ export interface SocialPlatformStats {
   impresiones: number
   engagementRate: number
   publicaciones: number
+  /** Solo Facebook (page_video_views); 0 en el resto de plataformas. */
+  videoViews: number
+  /** Solo Facebook (suma de shares por publicación); 0 en el resto. */
+  compartidos: number
 }
 
 const EMPTY_SOCIAL_KPIS = (labels: string[]): KpiData[] =>
@@ -619,9 +623,15 @@ export function computeSocialKpis(
   // impresiones reales de Instagram/YouTube.
   const impresionesLabel = tab === 'Facebook' ? 'Visitas a la página' : 'Impresiones'
 
+  // Facebook tiene dos métricas reales que no existen (todavía) para el
+  // resto de plataformas: vistas de vídeo (page_video_views) y compartidos
+  // totales (suma de shares por publicación). Se añaden como tarjetas extra
+  // solo en esa pestaña en vez de forzarlas en el grid común de 6.
+  const extraLabels = tab === 'Facebook' ? ['Visualizaciones de vídeo', 'Compartidos'] : []
+
   const s = data.find((x) => x.platform === tab)
   if (!s) {
-    return EMPTY_SOCIAL_KPIS(['Seguidores', 'Crecimiento neto', 'Alcance', impresionesLabel, 'Engagement Rate', 'Publicaciones'])
+    return EMPTY_SOCIAL_KPIS(['Seguidores', 'Crecimiento neto', 'Alcance', impresionesLabel, 'Engagement Rate', 'Publicaciones', ...extraLabels])
   }
   return [
     { label: 'Seguidores', value: formatNumber(s.seguidores) },
@@ -630,6 +640,12 @@ export function computeSocialKpis(
     { label: impresionesLabel, value: formatNumber(s.impresiones) },
     { label: 'Engagement Rate', value: formatPercent(s.engagementRate, 1) },
     { label: 'Publicaciones', value: formatNumber(s.publicaciones) },
+    ...(tab === 'Facebook'
+      ? [
+          { label: 'Visualizaciones de vídeo', value: formatNumber(s.videoViews) },
+          { label: 'Compartidos', value: formatNumber(s.compartidos) },
+        ]
+      : []),
   ]
 }
 
@@ -659,6 +675,23 @@ export interface Post {
   alcance: number
   likes: number
   comments: number
+}
+
+/**
+ * Publicación real de Facebook (facebook_posts, vía Graph API): a diferencia
+ * de `Post`, no incluye alcance/likes/comments porque no los tenemos (exige
+ * la feature "Page Public Content Access" de Meta, pendiente) — solo campos
+ * que sí son datos reales hoy.
+ */
+export interface FacebookPostCard {
+  id: string
+  fecha: string
+  caption: string
+  imageUrl: string | null
+  mediaType: string | null
+  shares: number
+  clicks: number
+  permalinkUrl: string | null
 }
 
 /* ========================================================================== */

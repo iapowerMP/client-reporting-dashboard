@@ -15,7 +15,7 @@ import {
   Tooltip,
   Legend,
 } from 'recharts'
-import { Eye, Heart, MessageCircle } from 'lucide-react'
+import { Eye, Heart, MessageCircle, Share2, MousePointerClick, ImageOff } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import ChartTooltip from '@/components/shared/ChartTooltip'
 import Tabs from '@/components/shared/Tabs'
@@ -29,6 +29,7 @@ import {
   type SocialTab,
   computeSocialKpis,
   type Post,
+  type FacebookPostCard,
 } from '@/data/catalog'
 import { useReportConfig } from '@/lib/reportConfig'
 import { getProvider } from '@/services'
@@ -71,6 +72,60 @@ function PostCard({ post }: { post: Post }) {
         </div>
       </div>
     </div>
+  )
+}
+
+// A diferencia de PostCard, esta usa datos 100% reales de Facebook (imagen,
+// shares, clics) — no muestra alcance/likes/comments porque no los tenemos
+// (exige la feature "Page Public Content Access" de Meta, pendiente).
+function FacebookPostGalleryCard({ post }: { post: FacebookPostCard }) {
+  const color = SOCIAL_COLORS.Facebook
+  const content = (
+    <div className="overflow-hidden rounded-card border border-border bg-card transition-colors hover:bg-white/[0.03]">
+      <div
+        className="relative aspect-square w-full overflow-hidden"
+        style={{ backgroundColor: `${color}33` }}
+      >
+        {post.imageUrl ? (
+          <img
+            src={post.imageUrl}
+            alt=""
+            loading="lazy"
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center">
+            <ImageOff className="h-8 w-8 text-text-secondary" />
+          </div>
+        )}
+        <div className="absolute left-3 top-3">
+          <PlatformBadge platform="Facebook" />
+        </div>
+      </div>
+      <div className="p-4">
+        <p className="text-xs text-text-secondary">{post.fecha}</p>
+        <p className="mt-1 line-clamp-2 text-sm text-text-primary">
+          {post.caption || 'Sin texto'}
+        </p>
+        <div className="mt-3 flex items-center gap-4 text-xs text-text-secondary">
+          <span className="inline-flex items-center gap-1">
+            <Share2 className="h-3.5 w-3.5" />
+            {formatNumber(post.shares)}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <MousePointerClick className="h-3.5 w-3.5" />
+            {formatNumber(post.clicks)}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+  return post.permalinkUrl ? (
+    <a href={post.permalinkUrl} target="_blank" rel="noreferrer" className="block">
+      {content}
+    </a>
+  ) : (
+    content
   )
 }
 
@@ -119,11 +174,15 @@ export default function Social() {
       ? formatCompact(reachData.reduce((s, r) => s + r.value, 0))
       : formatCompact(reachData[0]?.value ?? 0)
 
-  // Posts filtrados por plataforma.
+  // Posts filtrados por plataforma. Facebook tiene datos reales por
+  // publicación (imagen/shares/clics) en un campo aparte — se usa esa
+  // galería en su pestaña en vez del `Post` genérico (que para Facebook
+  // vendría vacío, ya que exigiría alcance/likes/comments inventados).
   const posts =
     activeTab === 'Todas'
       ? data.posts.filter((p) => visiblePlatforms.includes(p.platform))
       : data.posts.filter((p) => p.platform === activeTab)
+  const showFacebookGallery = activeTab === 'Facebook'
 
   return (
     <div className="space-y-6">
@@ -271,7 +330,19 @@ export default function Social() {
 
       {/* Grid de Top Posts */}
       <ChartCard title="Publicaciones destacadas">
-        {posts.length === 0 ? (
+        {showFacebookGallery ? (
+          data.facebookPosts.length === 0 ? (
+            <p className="py-8 text-center text-sm text-text-secondary">
+              No hay publicaciones para esta plataforma.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {data.facebookPosts.map((post) => (
+                <FacebookPostGalleryCard key={post.id} post={post} />
+              ))}
+            </div>
+          )
+        ) : posts.length === 0 ? (
           <p className="py-8 text-center text-sm text-text-secondary">
             No hay publicaciones para esta plataforma.
           </p>

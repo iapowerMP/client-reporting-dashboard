@@ -7,13 +7,16 @@
  *
  * Simplificación actual (V1): Instagram/YouTube solo guardan snapshots a
  * nivel de cuenta/canal (sin desglose por publicación). Facebook sí tiene
- * datos por publicación (facebook_posts, vía el edge /posts) — de ahí sale
- * el conteo real de "Publicaciones" — pero sin likes/comments individuales
- * todavía (eso exige la feature "Page Public Content Access" de Meta,
- * pendiente de revisión aparte), así que "engagement" y "publicaciones
- * destacadas" se devuelven vacíos con honestidad. "Alcance" solo existe para
- * Instagram (reach); Facebook e YouTube no exponen ese dato con los scopes
- * de solo lectura usados aquí.
+ * datos por publicación (facebook_posts, vía el edge /posts + Graph API
+ * batch) — de ahí salen el conteo real de "Publicaciones", el campo
+ * `facebookPosts` (imagen, tipo de media, shares, clics por publicación) y
+ * los agregados "Visualizaciones de vídeo" (page_video_views) y
+ * "Compartidos" — pero sin likes/comments individuales todavía (eso exige
+ * la feature "Page Public Content Access" de Meta, pendiente de revisión
+ * aparte), así que "engagement" y el `Post` genérico ("publicaciones
+ * destacadas") se devuelven vacíos con honestidad. "Alcance" solo existe
+ * para Instagram (reach); Facebook e YouTube no exponen ese dato con los
+ * scopes de solo lectura usados aquí.
  */
 import { timingSafeEqual, createHmac } from 'crypto'
 
@@ -75,6 +78,7 @@ interface FacebookRow {
   followers: string | number
   impressions: string | number
   engaged_users: string | number
+  video_views: string | number
 }
 
 interface InstagramRow {
@@ -93,6 +97,13 @@ interface YoutubeRow {
 
 interface FacebookPostRow {
   post_id: string
+  created_time: string | null
+  message: string | null
+  permalink_url: string | null
+  image_url: string | null
+  media_type: string | null
+  shares: string | number
+  clicks: string | number
 }
 
 export default async function handler(req: any, res: any) {
@@ -149,11 +160,11 @@ async function handleRequest(req: any, res: any) {
     const instagramId = accountByPlatform.get('instagram') ?? ''
     const youtubeChannelId = accountByPlatform.get('youtube') ?? ''
 
-    const [facebookRows, instagramRows, youtubeRows, facebookPostsCount] = await Promise.all([
+    const [facebookRows, instagramRows, youtubeRows, facebookPosts] = await Promise.all([
       fetchDaily<FacebookRow>(SUPABASE_URL, headers, 'facebook_page_daily', 'page_id', facebookPageId, client.id, dateFilters),
       fetchDaily<InstagramRow>(SUPABASE_URL, headers, 'instagram_daily', 'ig_user_id', instagramId, client.id, dateFilters),
       fetchDaily<YoutubeRow>(SUPABASE_URL, headers, 'youtube_daily', 'channel_id', youtubeChannelId, client.id, dateFilters),
-      fetchFacebookPostsCount(SUPABASE_URL, headers, facebookPageId, client.id, from, to),
+      fetchFacebookPosts(SUPABASE_URL, headers, facebookPageId, client.id, from, to),
     ])
 
     const stats: Array<{
@@ -164,11 +175,15 @@ async function handleRequest(req: any, res: any) {
       impresiones: number
       engagementRate: number
       publicaciones: number
+      videoViews: number
+      compartidos: number
     }> = []
 
     if (facebookRows.length) {
       const impresiones = facebookRows.reduce((s, r) => s + Number(r.impressions), 0)
       const engaged = facebookRows.reduce((s, r) => s + Number(r.engaged_users), 0)
+      const videoViews = facebookRows.reduce((s, r) => s + Number(r.video_views), 0)
+      const compartidos = facebookPosts.reduce((s, p) => s + Number(p.shares), 0)
       stats.push({
         platform: 'Facebook',
         seguidores: Number(facebookRows[facebookRows.length - 1].followers),
@@ -176,7 +191,9 @@ async function handleRequest(req: any, res: any) {
         alcance: 0,
         impresiones,
         engagementRate: impresiones ? round2((engaged / impresiones) * 100) : 0,
-        publicaciones: facebookPostsCount,
+        publicaciones: facebookPosts.length,
+        videoViews,
+        compartidos,
       })
     }
 
@@ -189,6 +206,8 @@ async function handleRequest(req: any, res: any) {
         impresiones: instagramRows.reduce((s, r) => s + Number(r.impressions), 0),
         engagementRate: 0,
         publicaciones: 0,
+        videoViews: 0,
+        compartidos: 0,
       })
     }
 
@@ -203,6 +222,8 @@ async function handleRequest(req: any, res: any) {
         impresiones: viewsDelta,
         engagementRate: 0,
         publicaciones: videosDelta,
+        videoViews: 0,
+        compartidos: 0,
       })
     }
 
@@ -230,6 +251,21 @@ async function handleRequest(req: any, res: any) {
       color: SOCIAL_COLORS[s.platform],
     }))
 
+    // Publicaciones reales de Facebook con imagen/tipo de media/shares/clics
+    // (facebook_posts) — hasta 24 más recientes del rango. likes/comments no
+    // se incluyen: por eso van en su propio campo `facebookPosts`, no en el
+    // `Post` genérico (que exige esos datos y aquí serían inventados).
+    const facebookPostCards = facebookPosts.slice(0, 24).map((p) => ({
+      id: p.post_id,
+      fecha: p.created_time ? formatDateLabel(p.created_time.slice(0, 10)) : '',
+      caption: p.message ?? '',
+      imageUrl: p.image_url,
+      mediaType: p.media_type,
+      shares: Number(p.shares),
+      clicks: Number(p.clicks),
+      permalinkUrl: p.permalink_url,
+    }))
+
     res.status(200).json({
       stats: stats.map((s) => ({
         platform: s.platform,
@@ -239,16 +275,18 @@ async function handleRequest(req: any, res: any) {
         impresiones: s.impresiones,
         engagementRate: s.engagementRate,
         publicaciones: s.publicaciones,
+        videoViews: s.videoViews,
+        compartidos: s.compartidos,
       })),
       followers,
-      // "publicaciones" (arriba) ya es un conteo real para Facebook (tabla
-      // facebook_posts). El listado de publicaciones destacadas y el
-      // engagement por like/comment siguen vacíos: ese desglose exige la
-      // feature "Page Public Content Access" de Meta (revisión de app
-      // aparte, pendiente) — estado vacío honesto en vez de inventarlo.
+      // El listado de publicaciones destacadas genérico y el engagement por
+      // like/comment siguen vacíos: ese desglose exige la feature "Page
+      // Public Content Access" de Meta (revisión de app aparte, pendiente)
+      // — estado vacío honesto en vez de inventarlo.
       engagement: [],
       reach,
       posts: [],
+      facebookPosts: facebookPostCards,
     })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudo leer Redes Sociales desde Supabase.' })
@@ -273,19 +311,24 @@ async function fetchDaily<T>(
   return (await resp.json()) as T[]
 }
 
-async function fetchFacebookPostsCount(
+async function fetchFacebookPosts(
   supabaseUrl: string,
   headers: Record<string, string>,
   pageId: string,
   clientId: string,
   from: string,
   to: string,
-): Promise<number> {
-  if (!pageId) return 0
-  const query = new URLSearchParams({ client_id: `eq.${clientId}`, page_id: `eq.${pageId}`, select: 'post_id' })
+): Promise<FacebookPostRow[]> {
+  if (!pageId) return []
+  const query = new URLSearchParams({
+    client_id: `eq.${clientId}`,
+    page_id: `eq.${pageId}`,
+    order: 'created_time.desc',
+    select: 'post_id,created_time,message,permalink_url,image_url,media_type,shares,clicks',
+  })
   if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('created_time', `gte.${from}`)
   if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('created_time', `lte.${to}T23:59:59`)
   const resp = await fetch(`${supabaseUrl}/rest/v1/facebook_posts?${query.toString()}`, { headers })
-  if (!resp.ok) return 0
-  return ((await resp.json()) as FacebookPostRow[]).length
+  if (!resp.ok) return []
+  return (await resp.json()) as FacebookPostRow[]
 }
