@@ -184,6 +184,15 @@ export default function Social() {
       : data.posts.filter((p) => p.platform === activeTab)
   const showFacebookGallery = activeTab === 'Facebook'
 
+  // En la pestaña Facebook, "Engagement por plataforma" y "Alcance por
+  // plataforma" siempre saldrían vacíos (no tenemos esos datos todavía) —
+  // se sustituyen por dos gráficos con datos 100% reales: evolución diaria
+  // (visitas/engagement/vídeo) y las publicaciones con más compartidos.
+  const topPostsByShares = [...data.facebookPosts]
+    .sort((a, b) => b.shares - a.shares)
+    .slice(0, 8)
+    .map((p) => ({ name: p.fecha, shares: p.shares, clicks: p.clicks }))
+
   return (
     <div className="space-y-6">
       {/* Tabs (filtran el contenido) */}
@@ -243,90 +252,176 @@ export default function Social() {
         </div>
       </ChartCard>
 
-      {/* Fila de 2 gráficos */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Gráfico 2: Engagement por plataforma (barras agrupadas) */}
-        <ChartCard title="Engagement por plataforma">
-          <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={engagementData}
-                margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
-                <XAxis
-                  dataKey="platform"
-                  stroke="#9CA3AF"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={{ stroke: '#2A2D36' }}
-                />
-                <YAxis
-                  stroke="#9CA3AF"
-                  fontSize={11}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(v) => formatCompact(v as number)}
-                  width={44}
-                />
-                <Tooltip
-                  content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
-                  cursor={{ fill: '#ffffff08' }}
-                />
-                <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-                <Bar dataKey="likes" name="Likes" fill="#F2FE54" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="comments" name="Comments" fill="#60A5FA" radius={[3, 3, 0, 0]} />
-                <Bar dataKey="shares" name="Shares" fill="#A78BFA" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </ChartCard>
-
-        {/* Gráfico 3: Alcance por plataforma (donut) */}
-        <ChartCard title="Alcance por plataforma">
-          <div className="relative h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={reachData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={70}
-                  outerRadius={100}
-                  paddingAngle={2}
-                  stroke="none"
+      {activeTab === 'Facebook' ? (
+        /* Facebook: "Engagement por plataforma" y "Alcance por plataforma"
+         * no tienen dato real todavía (0 siempre) — en su lugar, dos
+         * gráficos con datos que sí tenemos. */
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <ChartCard title="Visitas, engagement y vídeo — evolución diaria">
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={data.facebookDaily}
+                  margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
                 >
-                  {reachData.map((slice) => (
-                    <Cell key={slice.name} fill={slice.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-2xl font-bold text-white">{reachCenter}</span>
-              <span className="text-xs text-text-secondary">Alcance total</span>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
+                  <XAxis
+                    dataKey="date"
+                    stroke="#9CA3AF"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={{ stroke: '#2A2D36' }}
+                    interval={4}
+                  />
+                  <YAxis
+                    stroke="#9CA3AF"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v) => formatCompact(v as number)}
+                    width={44}
+                  />
+                  <Tooltip
+                    content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
+                    cursor={{ stroke: '#2A2D36' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} iconType="plainline" />
+                  <Line type="monotone" dataKey="visitas" name="Visitas a la página" stroke="#60A5FA" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="engagement" name="Engagement" stroke="#F2FE54" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="videoViews" name="Vistas de vídeo" stroke="#A78BFA" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
-          </div>
-          <div className="mt-2 flex flex-wrap justify-center gap-4">
-            {reachData.map((slice) => (
-              <div key={slice.name} className="flex items-center gap-2 text-xs">
-                <span
-                  className="h-2.5 w-2.5 rounded-full"
-                  style={{ backgroundColor: slice.color }}
-                />
-                <span className="text-text-secondary">
-                  {slice.name} · {slice.percent}
-                </span>
+          </ChartCard>
+
+          <ChartCard title="Publicaciones con más compartidos">
+            {topPostsByShares.length === 0 ? (
+              <p className="py-8 text-center text-sm text-text-secondary">
+                No hay publicaciones para esta plataforma.
+              </p>
+            ) : (
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={topPostsByShares}
+                    margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
+                    <XAxis
+                      dataKey="name"
+                      stroke="#9CA3AF"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={{ stroke: '#2A2D36' }}
+                    />
+                    <YAxis
+                      stroke="#9CA3AF"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(v) => formatCompact(v as number)}
+                      width={44}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
+                      cursor={{ fill: '#ffffff08' }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                    <Bar dataKey="shares" name="Compartidos" fill="#A78BFA" radius={[3, 3, 0, 0]} />
+                    <Bar dataKey="clicks" name="Clics" fill="#60A5FA" radius={[3, 3, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-            ))}
-          </div>
-        </ChartCard>
-      </div>
+            )}
+          </ChartCard>
+        </div>
+      ) : (
+        /* Fila de 2 gráficos */
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          {/* Gráfico 2: Engagement por plataforma (barras agrupadas) */}
+          <ChartCard title="Engagement por plataforma">
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={engagementData}
+                  margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
+                  <XAxis
+                    dataKey="platform"
+                    stroke="#9CA3AF"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={{ stroke: '#2A2D36' }}
+                  />
+                  <YAxis
+                    stroke="#9CA3AF"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(v) => formatCompact(v as number)}
+                    width={44}
+                  />
+                  <Tooltip
+                    content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
+                    cursor={{ fill: '#ffffff08' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
+                  <Bar dataKey="likes" name="Likes" fill="#F2FE54" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="comments" name="Comments" fill="#60A5FA" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="shares" name="Shares" fill="#A78BFA" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </ChartCard>
+
+          {/* Gráfico 3: Alcance por plataforma (donut) */}
+          <ChartCard title="Alcance por plataforma">
+            <div className="relative h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={reachData}
+                    dataKey="value"
+                    nameKey="name"
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={70}
+                    outerRadius={100}
+                    paddingAngle={2}
+                    stroke="none"
+                  >
+                    {reachData.map((slice) => (
+                      <Cell key={slice.name} fill={slice.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-2xl font-bold text-white">{reachCenter}</span>
+                <span className="text-xs text-text-secondary">Alcance total</span>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap justify-center gap-4">
+              {reachData.map((slice) => (
+                <div key={slice.name} className="flex items-center gap-2 text-xs">
+                  <span
+                    className="h-2.5 w-2.5 rounded-full"
+                    style={{ backgroundColor: slice.color }}
+                  />
+                  <span className="text-text-secondary">
+                    {slice.name} · {slice.percent}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </ChartCard>
+        </div>
+      )}
 
       {/* Grid de Top Posts */}
       <ChartCard title="Publicaciones destacadas">

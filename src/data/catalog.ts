@@ -683,6 +683,15 @@ export interface Post {
  * la feature "Page Public Content Access" de Meta, pendiente) — solo campos
  * que sí son datos reales hoy.
  */
+/** Evolución diaria de Facebook (visitas a la página, engagement agregado
+ * y vistas de vídeo) — datos reales, propios de esta plataforma. */
+export interface FacebookDailyPoint {
+  date: string
+  visitas: number
+  engagement: number
+  videoViews: number
+}
+
 export interface FacebookPostCard {
   id: string
   fecha: string
