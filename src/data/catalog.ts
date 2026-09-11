@@ -623,6 +623,13 @@ export function computeSocialKpis(
   // impresiones reales de Instagram/YouTube.
   const impresionesLabel = tab === 'Facebook' ? 'Visitas a la página' : 'Impresiones'
 
+  // "Alcance" solo es un dato real hoy (o potencialmente real, en cuanto se
+  // conecte) para Instagram. Facebook y YouTube no lo exponen con los scopes
+  // usados aquí (Facebook: confirmado deprecado por Meta; YouTube: no hay
+  // fuente construida) — mostrar la tarjeta a 0 para siempre no es honesto,
+  // es directamente una métrica que no existe: mejor no mostrarla.
+  const showAlcance = tab === 'Instagram'
+
   // Facebook tiene dos métricas reales que no existen (todavía) para el
   // resto de plataformas: vistas de vídeo (page_video_views) y compartidos
   // totales (suma de shares por publicación). Se añaden como tarjetas extra
@@ -631,12 +638,20 @@ export function computeSocialKpis(
 
   const s = data.find((x) => x.platform === tab)
   if (!s) {
-    return EMPTY_SOCIAL_KPIS(['Seguidores', 'Crecimiento neto', 'Alcance', impresionesLabel, 'Engagement Rate', 'Publicaciones', ...extraLabels])
+    return EMPTY_SOCIAL_KPIS([
+      'Seguidores',
+      'Crecimiento neto',
+      ...(showAlcance ? ['Alcance'] : []),
+      impresionesLabel,
+      'Engagement Rate',
+      'Publicaciones',
+      ...extraLabels,
+    ])
   }
   return [
     { label: 'Seguidores', value: formatNumber(s.seguidores) },
     { label: 'Crecimiento neto', value: `+${formatNumber(s.crecimientoNeto)}` },
-    { label: 'Alcance', value: formatNumber(s.alcance) },
+    ...(showAlcance ? [{ label: 'Alcance', value: formatNumber(s.alcance) }] : []),
     { label: impresionesLabel, value: formatNumber(s.impresiones) },
     { label: 'Engagement Rate', value: formatPercent(s.engagementRate, 1) },
     { label: 'Publicaciones', value: formatNumber(s.publicaciones) },

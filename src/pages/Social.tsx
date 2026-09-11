@@ -158,21 +158,16 @@ export default function Social() {
   // Series de seguidores visibles según la pestaña.
   const followerKeys = activeTab === 'Todas' ? platformTabs : [activeTab]
 
-  // Engagement filtrado por plataforma.
-  const engagementData =
-    activeTab === 'Todas'
-      ? data.engagement.filter((e) => visiblePlatforms.includes(e.platform))
-      : data.engagement.filter((e) => e.platform === activeTab)
-
-  // Alcance (donut) filtrado por plataforma.
+  // Alcance (donut) filtrado por plataforma. Solo Instagram reporta este
+  // dato hoy — si no está conectado (o su alcance es 0), no hay nada real
+  // que mostrar: mejor no pintar el donut que dejarlo siempre a 0.
   const reachData =
     activeTab === 'Todas'
       ? data.reach.filter((r) => visiblePlatforms.includes(r.name))
       : data.reach.filter((r) => r.name === activeTab)
+  const totalReach = reachData.reduce((s, r) => s + r.value, 0)
   const reachCenter =
-    activeTab === 'Todas'
-      ? formatCompact(reachData.reduce((s, r) => s + r.value, 0))
-      : formatCompact(reachData[0]?.value ?? 0)
+    activeTab === 'Todas' ? formatCompact(totalReach) : formatCompact(reachData[0]?.value ?? 0)
 
   // Posts filtrados por plataforma. Facebook tiene datos reales por
   // publicación (imagen/shares/clics) en un campo aparte — se usa esa
@@ -340,46 +335,14 @@ export default function Social() {
           </ChartCard>
         </div>
       ) : (
-        /* Fila de 2 gráficos */
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {/* Gráfico 2: Engagement por plataforma (barras agrupadas) */}
-          <ChartCard title="Engagement por plataforma">
-            <div className="h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={engagementData}
-                  margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
-                  <XAxis
-                    dataKey="platform"
-                    stroke="#9CA3AF"
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={{ stroke: '#2A2D36' }}
-                  />
-                  <YAxis
-                    stroke="#9CA3AF"
-                    fontSize={11}
-                    tickLine={false}
-                    axisLine={false}
-                    tickFormatter={(v) => formatCompact(v as number)}
-                    width={44}
-                  />
-                  <Tooltip
-                    content={<ChartTooltip formatter={(v) => formatNumber(v)} />}
-                    cursor={{ fill: '#ffffff08' }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
-                  <Bar dataKey="likes" name="Likes" fill="#F2FE54" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="comments" name="Comments" fill="#60A5FA" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="shares" name="Shares" fill="#A78BFA" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </ChartCard>
-
-          {/* Gráfico 3: Alcance por plataforma (donut) */}
+        // "Engagement por plataforma" se ha quitado: /api/social nunca
+        // rellena ese dato para ninguna plataforma todavía (requiere Page
+        // Public Content Access en Facebook, y no está construido en
+        // Instagram/YouTube) — no tenía sentido dejar un gráfico
+        // permanentemente vacío. "Alcance por plataforma" solo se pinta si
+        // hay alcance real que mostrar (hoy, solo si Instagram está
+        // conectado y reporta datos).
+        totalReach > 0 && (
           <ChartCard title="Alcance por plataforma">
             <div className="relative h-72">
               <ResponsiveContainer width="100%" height="100%">
@@ -423,7 +386,7 @@ export default function Social() {
               ))}
             </div>
           </ChartCard>
-        </div>
+        )
       )}
 
       {/* Grid de Top Posts */}
