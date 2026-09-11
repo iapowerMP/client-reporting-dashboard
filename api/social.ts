@@ -9,10 +9,12 @@
  * nivel de cuenta/canal (sin desglose por publicación). Facebook sí tiene
  * datos por publicación (facebook_posts, vía el edge /posts + Graph API
  * batch) — de ahí salen el conteo real de "Publicaciones", el campo
- * `facebookPosts` (imagen, tipo de media, shares, clics por publicación),
- * `facebookDaily` (visitas/engagement/vídeo día a día, para su propio
- * gráfico) y los agregados "Visualizaciones de vídeo" (page_video_views) y
- * "Compartidos" — pero sin likes/comments individuales todavía (eso exige
+ * `facebookPosts` (imagen, tipo de media, shares, clics por publicación —
+ * siempre las más recientes, SIN acotar por from/to: si el cliente lleva
+ * meses sin publicar, seguimos mostrando lo último real en vez de un hueco
+ * vacío) y `facebookDaily` (visitas/engagement/vídeo día a día, para su
+ * propio gráfico). Los agregados "Publicaciones" y "Compartidos" del KPI SÍ
+ * respetan from/to — pero sin likes/comments individuales todavía (eso exige
  * la feature "Page Public Content Access" de Meta, pendiente de revisión
  * aparte), así que "engagement" y el `Post` genérico ("publicaciones
  * destacadas") se devuelven vacíos con honestidad. "Alcance" solo existe
@@ -165,8 +167,21 @@ async function handleRequest(req: any, res: any) {
       fetchDaily<FacebookRow>(SUPABASE_URL, headers, 'facebook_page_daily', 'page_id', facebookPageId, client.id, dateFilters),
       fetchDaily<InstagramRow>(SUPABASE_URL, headers, 'instagram_daily', 'ig_user_id', instagramId, client.id, dateFilters),
       fetchDaily<YoutubeRow>(SUPABASE_URL, headers, 'youtube_daily', 'channel_id', youtubeChannelId, client.id, dateFilters),
-      fetchFacebookPosts(SUPABASE_URL, headers, facebookPageId, client.id, from, to),
+      fetchFacebookPosts(SUPABASE_URL, headers, facebookPageId, client.id),
     ])
+
+    // "Publicaciones"/"Compartidos" sí respetan el periodo seleccionado (7d/
+    // 30d/90d/personalizado): si el cliente no publicó nada en ese rango, es
+    // honesto que salga 0 — la galería de abajo, en cambio, siempre enseña
+    // las publicaciones reales más recientes, sin importar el rango.
+    const isWithinRange = (iso: string | null) => {
+      if (!iso) return false
+      const date = iso.slice(0, 10)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(from) && date < from) return false
+      if (/^\d{4}-\d{2}-\d{2}$/.test(to) && date > to) return false
+      return true
+    }
+    const facebookPostsInRange = facebookPosts.filter((p) => isWithinRange(p.created_time))
 
     const stats: Array<{
       platform: SocialTabName
@@ -184,7 +199,7 @@ async function handleRequest(req: any, res: any) {
       const impresiones = facebookRows.reduce((s, r) => s + Number(r.impressions), 0)
       const engaged = facebookRows.reduce((s, r) => s + Number(r.engaged_users), 0)
       const videoViews = facebookRows.reduce((s, r) => s + Number(r.video_views), 0)
-      const compartidos = facebookPosts.reduce((s, p) => s + Number(p.shares), 0)
+      const compartidos = facebookPostsInRange.reduce((s, p) => s + Number(p.shares), 0)
       stats.push({
         platform: 'Facebook',
         seguidores: Number(facebookRows[facebookRows.length - 1].followers),
@@ -192,7 +207,7 @@ async function handleRequest(req: any, res: any) {
         alcance: 0,
         impresiones,
         engagementRate: impresiones ? round2((engaged / impresiones) * 100) : 0,
-        publicaciones: facebookPosts.length,
+        publicaciones: facebookPostsInRange.length,
         videoViews,
         compartidos,
       })
@@ -323,13 +338,16 @@ async function fetchDaily<T>(
   return (await resp.json()) as T[]
 }
 
+// Sin filtro de fecha a propósito: a diferencia de las métricas diarias, las
+// publicaciones son eventos esporádicos — si el cliente lleva meses sin
+// publicar, filtrar por "últimos 30 días" dejaría la galería vacía aunque sí
+// tengamos publicaciones reales que enseñar. El propio /api/social se
+// encarga de acotar por fecha solo el KPI "Publicaciones"/"Compartidos".
 async function fetchFacebookPosts(
   supabaseUrl: string,
   headers: Record<string, string>,
   pageId: string,
   clientId: string,
-  from: string,
-  to: string,
 ): Promise<FacebookPostRow[]> {
   if (!pageId) return []
   const query = new URLSearchParams({
@@ -338,8 +356,6 @@ async function fetchFacebookPosts(
     order: 'created_time.desc',
     select: 'post_id,created_time,message,permalink_url,image_url,media_type,shares,clicks',
   })
-  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('created_time', `gte.${from}`)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('created_time', `lte.${to}T23:59:59`)
   const resp = await fetch(`${supabaseUrl}/rest/v1/facebook_posts?${query.toString()}`, { headers })
   if (!resp.ok) return []
   return (await resp.json()) as FacebookPostRow[]

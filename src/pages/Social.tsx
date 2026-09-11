@@ -294,7 +294,10 @@ export default function Social() {
             </div>
           </ChartCard>
 
-          <ChartCard title="Publicaciones con más compartidos">
+          <ChartCard
+            title="Publicaciones con más compartidos"
+            action={<span className="text-xs text-text-secondary">Histórico, no depende del rango</span>}
+          >
             {topPostsByShares.length === 0 ? (
               <p className="py-8 text-center text-sm text-text-secondary">
                 No hay publicaciones para esta plataforma.
@@ -424,7 +427,16 @@ export default function Social() {
       )}
 
       {/* Grid de Top Posts */}
-      <ChartCard title="Publicaciones destacadas">
+      <ChartCard
+        title="Publicaciones destacadas"
+        action={
+          showFacebookGallery ? (
+            <span className="text-xs text-text-secondary">
+              Últimas publicaciones reales, no depende del rango de fechas
+            </span>
+          ) : undefined
+        }
+      >
         {showFacebookGallery ? (
           data.facebookPosts.length === 0 ? (
             <p className="py-8 text-center text-sm text-text-secondary">
