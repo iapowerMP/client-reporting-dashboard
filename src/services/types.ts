@@ -24,6 +24,7 @@ import type {
   FollowersPoint,
   EngagementBar,
   Post,
+  FacebookPostCard,
   SocialPlatformStats,
 } from '@/data/catalog'
 
@@ -82,6 +83,9 @@ export interface SocialData {
   engagement: EngagementBar[]
   reach: PlatformSlice[]
   posts: Post[]
+  /** Publicaciones reales de Facebook (imagen, shares, clics) — vacío para
+   * el resto de plataformas, que todavía no tienen este desglose. */
+  facebookPosts: FacebookPostCard[]
 }
 
 /** Rango de fechas del selector del informe (7d/30d/90d o personalizado). */

@@ -23,15 +23,23 @@
  * (Postgres) + "Calcular rango de fechas" (últimos 30 días), y desde ahí se
  * ramifica en dos ingestas independientes (si una falla no bloquea la otra):
  *   A) "Insights de la pagina" (HTTP: page_follows/page_views_total/
- *      page_post_engagements por día) → "Transformar a SQL upsert" →
- *      Postgres — tabla facebook_page_daily.
+ *      page_post_engagements/page_video_views por día) → "Transformar a SQL
+ *      upsert" → Postgres — tabla facebook_page_daily.
  *   B) "Publicaciones de la pagina" (HTTP: GET /posts — id/message/
- *      created_time/permalink_url/shares, hasta 100 más recientes) →
- *      "Transformar publicaciones a SQL upsert" → Postgres — tabla
- *      facebook_posts. Esto es lo que permite un conteo real de
- *      "Publicaciones" en el dashboard (antes fijo a 0). likes/comments por
- *      publicación quedan fuera por ahora: ese edge exige la feature "Page
- *      Public Content Access" de Meta (revisión de app aparte, pendiente).
+ *      created_time/permalink_url/shares/full_picture/attachments, hasta 100
+ *      más recientes) → dos sub-ramas:
+ *        B1) "Transformar publicaciones a SQL upsert" → Postgres — tabla
+ *            facebook_posts (conteo real de "Publicaciones", antes fijo a
+ *            0, más imagen/tipo de media de cada publicación).
+ *        B2) "Construir batch de clics" (hasta 50 publicaciones más
+ *            recientes) → "Clics por publicacion" (HTTP: POST /?batch=...,
+ *            un único request por Graph API batch en vez de N) →
+ *            "Transformar clics a SQL update" → Postgres — actualiza
+ *            facebook_posts.clicks (post_clicks, métrica por publicación
+ *            que SÍ sigue viva).
+ *      likes/comments/reacciones por publicación quedan fuera por ahora:
+ *      ese dato exige la feature "Page Public Content Access" de Meta
+ *      (revisión de app aparte, pendiente).
  *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con Facebook", "Buscar pagina y
@@ -41,9 +49,9 @@
  * secreto): la URL completa se guarda solo en la variable de entorno de
  * Vercel N8N_FACEBOOK_SYNC_WEBHOOK_URL, nunca en el repo.
  *
- * Métricas (confirmadas a mano en el Explorador de la API Graph en
- * sep-2026, tras la deprecación de Meta de nov-2025 que tumbó
- * page_impressions/page_engaged_users/fan_count):
+ * Métricas de "Insights de la pagina" (confirmadas a mano en el Explorador
+ * de la API Graph en sep-2026, tras la deprecación de Meta de nov-2025 que
+ * tumbó page_impressions/page_engaged_users/fan_count):
  *   - followers    ← page_follows          (histórico real día a día, ya no
  *                                            hace falta aplicar el valor
  *                                            actual a todo el lote)
@@ -55,10 +63,17 @@
  *                                            ya no es "usuarios únicos" como
  *                                            la métrica vieja, pero es la
  *                                            aproximación más cercana viva)
+ *   - video_views  ← page_video_views      (vistas >3s de vídeos de la
+ *                                            página del día)
+ * IMPORTANTE — lección de la ronda de pruebas de sep-2026: si se prueban
+ * varias métricas juntas en una sola llamada y UNA es inválida, la API
+ * Graph devuelve error para la llamada ENTERA (no filtra solo la inválida).
+ * Antes de dar una métrica por muerta, probarla sola. Así se descubrieron
+ * page_video_views y post_clicks, que parecían muertas en lotes anteriores.
  * Las columnas de Supabase conservan sus nombres originales para no romper
  * el resto de la app; lo que cambia es de qué métrica de Meta se rellenan.
  * "Insights de la pagina" mantiene options.response.neverError = true: si
- * Meta vuelve a deprecar alguna de estas tres, el día se guarda con lo que
+ * Meta vuelve a deprecar alguna de estas cuatro, el día se guarda con lo que
  * falte a 0 en vez de romper toda la sincronización.
  *   - El token de página no se refresca automáticamente: si caduca o el
  *     cliente revoca el acceso, habrá que pedirle que pulse "Reconectar con
@@ -195,7 +210,7 @@ const fetchInsights = node({
       specifyQuery: 'keypair',
       queryParameters: {
         parameters: [
-          { name: 'metric', value: 'page_follows,page_views_total,page_post_engagements' },
+          { name: 'metric', value: 'page_follows,page_views_total,page_post_engagements,page_video_views' },
           { name: 'period', value: 'day' },
           { name: 'since', value: expr('{{ $("Calcular rango de fechas").item.json.since }}') },
           { name: 'until', value: expr('{{ $("Calcular rango de fechas").item.json.until }}') },
@@ -229,10 +244,11 @@ for (const m of metrics) {
   for (const v of (m.values || [])) {
     const date = String(v.end_time || '').slice(0, 10);
     if (!date) continue;
-    const cur = byDate.get(date) || { followers: 0, impressions: 0, engaged_users: 0 };
+    const cur = byDate.get(date) || { followers: 0, impressions: 0, engaged_users: 0, video_views: 0 };
     if (m.name === 'page_follows') cur.followers = num(v.value);
     if (m.name === 'page_views_total') cur.impressions = num(v.value);
     if (m.name === 'page_post_engagements') cur.engaged_users = num(v.value);
+    if (m.name === 'page_video_views') cur.video_views = num(v.value);
     byDate.set(date, cur);
   }
 }
@@ -240,16 +256,16 @@ for (const m of metrics) {
 // datos, se guarda igualmente una fila vacía del día de hoy: mejor un hueco
 // honesto que no guardar nada ni dejar de actualizar last_sync.
 if (byDate.size === 0) {
-  byDate.set(untilDate, { followers: 0, impressions: 0, engaged_users: 0 });
+  byDate.set(untilDate, { followers: 0, impressions: 0, engaged_users: 0, video_views: 0 });
 }
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'facebook';";
 const values = Array.from(byDate.entries()).map(([date, v]) =>
-  '(' + esc(clientId) + '::uuid, ' + esc(pageId) + ', ' + esc(date) + '::date, ' + v.followers + ', ' + v.impressions + ', ' + v.engaged_users + ')'
+  '(' + esc(clientId) + '::uuid, ' + esc(pageId) + ', ' + esc(date) + '::date, ' + v.followers + ', ' + v.impressions + ', ' + v.engaged_users + ', ' + v.video_views + ')'
 ).join(',');
 const upsertQuery =
-  'INSERT INTO facebook_page_daily (client_id, page_id, date, followers, impressions, engaged_users) VALUES ' +
+  'INSERT INTO facebook_page_daily (client_id, page_id, date, followers, impressions, engaged_users, video_views) VALUES ' +
   values +
-  ' ON CONFLICT (client_id, date) DO UPDATE SET page_id = EXCLUDED.page_id, followers = EXCLUDED.followers, impressions = EXCLUDED.impressions, engaged_users = EXCLUDED.engaged_users, updated_at = now();';
+  ' ON CONFLICT (client_id, date) DO UPDATE SET page_id = EXCLUDED.page_id, followers = EXCLUDED.followers, impressions = EXCLUDED.impressions, engaged_users = EXCLUDED.engaged_users, video_views = EXCLUDED.video_views, updated_at = now();';
 return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: byDate.size } };`,
     },
     position: [1780, 300],
@@ -281,7 +297,7 @@ const fetchPosts = node({
       specifyQuery: 'keypair',
       queryParameters: {
         parameters: [
-          { name: 'fields', value: 'id,message,created_time,permalink_url,shares' },
+          { name: 'fields', value: 'id,message,created_time,permalink_url,shares,full_picture,attachments{media_type,url}' },
           { name: 'limit', value: '100' },
           { name: 'access_token', value: expr('{{ $("Buscar pagina y token").item.json.oauth_access_token }}') },
         ],
@@ -314,13 +330,16 @@ const values = posts.map((p) => {
   const created = p.created_time ? esc(p.created_time) + '::timestamptz' : 'null';
   const message = p.message ? esc(p.message) : 'null';
   const permalink = p.permalink_url ? esc(p.permalink_url) : 'null';
+  const imageUrl = p.full_picture ? esc(p.full_picture) : 'null';
+  const attachment = ((p.attachments || {}).data || [])[0] || {};
+  const mediaType = attachment.media_type ? esc(attachment.media_type) : 'null';
   const shares = num((p.shares || {}).count);
-  return '(' + esc(clientId) + '::uuid, ' + esc(pageId) + ', ' + esc(p.id) + ', ' + created + ', ' + message + ', ' + permalink + ', ' + shares + ')';
+  return '(' + esc(clientId) + '::uuid, ' + esc(pageId) + ', ' + esc(p.id) + ', ' + created + ', ' + message + ', ' + permalink + ', ' + imageUrl + ', ' + mediaType + ', ' + shares + ')';
 }).join(',');
 const upsertQuery =
-  'INSERT INTO facebook_posts (client_id, page_id, post_id, created_time, message, permalink_url, shares) VALUES ' +
+  'INSERT INTO facebook_posts (client_id, page_id, post_id, created_time, message, permalink_url, image_url, media_type, shares) VALUES ' +
   values +
-  ' ON CONFLICT (client_id, post_id) DO UPDATE SET page_id = EXCLUDED.page_id, created_time = EXCLUDED.created_time, message = EXCLUDED.message, permalink_url = EXCLUDED.permalink_url, shares = EXCLUDED.shares, updated_at = now();';
+  ' ON CONFLICT (client_id, post_id) DO UPDATE SET page_id = EXCLUDED.page_id, created_time = EXCLUDED.created_time, message = EXCLUDED.message, permalink_url = EXCLUDED.permalink_url, image_url = EXCLUDED.image_url, media_type = EXCLUDED.media_type, shares = EXCLUDED.shares, updated_at = now();';
 return { json: { query: upsertQuery, rowCount: posts.length } };`,
     },
     position: [1780, 500],
@@ -336,6 +355,102 @@ const upsertPosts = node({
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
     position: [2000, 500],
+  },
+  output: [{}],
+})
+
+// post_clicks es una métrica POR publicación (no viene en el listado de
+// /posts): pedirla publicación a publicación serían hasta 100 llamadas HTTP
+// por cliente y día. Se usa el batch endpoint de Graph API (un único POST
+// con hasta 50 sub-peticiones) sobre las publicaciones más recientes.
+const buildClicksBatch = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Construir batch de clics',
+    parameters: {
+      mode: 'runOnceForEachItem',
+      language: 'javaScript',
+      jsCode: `const posts = ($json.data || []).slice(0, 50);
+const batch = posts.map((p) => ({ method: 'GET', relative_url: p.id + '/insights?metric=post_clicks' }));
+return { json: { batchJson: JSON.stringify(batch), postIds: posts.map((p) => p.id) } };`,
+    },
+    position: [1560, 700],
+  },
+  output: [{ batchJson: '', postIds: [] }],
+})
+
+const fetchClicksBatch = node({
+  type: 'n8n-nodes-base.httpRequest',
+  version: 4.4,
+  config: {
+    name: 'Clics por publicacion',
+    parameters: {
+      method: 'POST',
+      url: 'https://graph.facebook.com/v25.0/',
+      sendBody: true,
+      contentType: 'form-urlencoded',
+      specifyBody: 'keypair',
+      bodyParameters: {
+        parameters: [
+          { name: 'access_token', value: expr('{{ $("Buscar pagina y token").item.json.oauth_access_token }}') },
+          { name: 'batch', value: expr('{{ $json.batchJson }}') },
+        ],
+      },
+      options: { response: { response: { neverError: true } } },
+    },
+    position: [1780, 700],
+  },
+  output: [{}],
+})
+
+const transformClicksUpdate = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Transformar clics a SQL update',
+    parameters: {
+      // "Clics por publicacion" devuelve un array JSON (respuesta batch de
+      // Graph API): n8n lo desdobla automáticamente en un item por elemento.
+      // Por eso este nodo va en runOnceForAllItems — necesita ver los 50 a
+      // la vez para emparejarlos por posición con postIds (runOnceForEachItem
+      // ejecutaría 50 veces con un solo resultado suelto cada vez, sin forma
+      // de saber a qué publicación pertenece).
+      mode: 'runOnceForAllItems',
+      language: 'javaScript',
+      jsCode: `const results = $input.all().map((it) => it.json);
+const postIds = $('Construir batch de clics').first().json.postIds || [];
+const clientId = $('Buscar pagina y token').first().json.client_id;
+const esc = (v) => "'" + String(v).replace(/'/g, "''") + "'";
+const updates = [];
+for (let i = 0; i < results.length; i++) {
+  const r = results[i];
+  const postId = postIds[i];
+  if (!postId || !r || r.code !== 200) continue;
+  let body;
+  try { body = JSON.parse(r.body); } catch (e) { continue; }
+  const metricRow = (body.data || [])[0];
+  const clicks = metricRow && metricRow.values && metricRow.values[0] ? (Number(metricRow.values[0].value) || 0) : 0;
+  updates.push('UPDATE facebook_posts SET clicks = ' + clicks + ' WHERE client_id = ' + esc(clientId) + '::uuid AND post_id = ' + esc(postId) + ';');
+}
+if (updates.length === 0) {
+  return [{ json: { query: 'SELECT 1;', rowCount: 0 } }];
+}
+return [{ json: { query: updates.join(' '), rowCount: updates.length } }];`,
+    },
+    position: [2000, 700],
+  },
+  output: [{ query: '', rowCount: 0 }],
+})
+
+const upsertClicks = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Actualizar clics en Supabase',
+    parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [2220, 700],
   },
   output: [{}],
 })
@@ -356,3 +471,8 @@ export default workflow('facebook-ingest', 'CRD - Facebook Page to Supabase (ing
   .to(fetchPosts)
   .to(transformPosts)
   .to(upsertPosts)
+  .add(fetchPosts)
+  .to(buildClicksBatch)
+  .to(fetchClicksBatch)
+  .to(transformClicksUpdate)
+  .to(upsertClicks)

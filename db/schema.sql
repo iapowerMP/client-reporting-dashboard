@@ -263,6 +263,7 @@ create table if not exists facebook_page_daily (
   followers        bigint not null default 0,   -- page_follows (del día; a diferencia de las demás redes, aquí sí es histórico real, no un snapshot repetido)
   impressions      bigint not null default 0,   -- page_views_total (vistas de la página del día; Meta fusionó "impressions" dentro de "views" en nov-2025)
   engaged_users    bigint not null default 0,   -- page_post_engagements (interacciones del día: like+comentario+compartir)
+  video_views      bigint not null default 0,   -- page_video_views (vistas >3s de vídeos de la página del día)
   updated_at       timestamptz not null default now(),
   unique (client_id, date)
 );
@@ -271,10 +272,12 @@ create index if not exists idx_facebook_page_daily_client_date
   on facebook_page_daily (client_id, date);
 
 -- Publicaciones reales de la Página (edge /posts, no /insights): habilita el
--- conteo real de "Publicaciones" que antes era 0 fijo. likes/comments quedan
--- fuera por ahora — ese edge exige la feature "Page Public Content Access"
--- de Meta (revisión de app aparte, pendiente); shares sí viene con el token
--- de página normal.
+-- conteo real de "Publicaciones" que antes era 0 fijo, más imagen/tipo de
+-- media (campo attachments, sin permisos extra) y clics (post_clicks, vía
+-- Graph API batch sobre las publicaciones más recientes). likes/comments
+-- quedan fuera por ahora — ese edge exige la feature "Page Public Content
+-- Access" de Meta (revisión de app aparte, pendiente); shares sí viene con
+-- el token de página normal.
 create table if not exists facebook_posts (
   id               bigint generated always as identity primary key,
   client_id        uuid not null references clients(id) on delete cascade,
@@ -283,7 +286,10 @@ create table if not exists facebook_posts (
   created_time     timestamptz,
   message          text,
   permalink_url    text,
+  image_url        text,                        -- full_picture
+  media_type       text,                        -- attachments[0].media_type (photo/video/album/...)
   shares           bigint not null default 0,
+  clicks           bigint not null default 0,    -- post_clicks (lifetime, solo se refresca para las publicaciones más recientes)
   updated_at       timestamptz not null default now(),
   unique (client_id, post_id)
 );
