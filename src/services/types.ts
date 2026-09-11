@@ -25,6 +25,7 @@ import type {
   EngagementBar,
   Post,
   FacebookPostCard,
+  FacebookDailyPoint,
   SocialPlatformStats,
 } from '@/data/catalog'
 
@@ -86,6 +87,9 @@ export interface SocialData {
   /** Publicaciones reales de Facebook (imagen, shares, clics) — vacío para
    * el resto de plataformas, que todavía no tienen este desglose. */
   facebookPosts: FacebookPostCard[]
+  /** Evolución diaria real de Facebook (visitas/engagement/vídeo) — vacío
+   * para el resto de plataformas. */
+  facebookDaily: FacebookDailyPoint[]
 }
 
 /** Rango de fechas del selector del informe (7d/30d/90d o personalizado). */

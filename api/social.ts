@@ -9,8 +9,9 @@
  * nivel de cuenta/canal (sin desglose por publicación). Facebook sí tiene
  * datos por publicación (facebook_posts, vía el edge /posts + Graph API
  * batch) — de ahí salen el conteo real de "Publicaciones", el campo
- * `facebookPosts` (imagen, tipo de media, shares, clics por publicación) y
- * los agregados "Visualizaciones de vídeo" (page_video_views) y
+ * `facebookPosts` (imagen, tipo de media, shares, clics por publicación),
+ * `facebookDaily` (visitas/engagement/vídeo día a día, para su propio
+ * gráfico) y los agregados "Visualizaciones de vídeo" (page_video_views) y
  * "Compartidos" — pero sin likes/comments individuales todavía (eso exige
  * la feature "Page Public Content Access" de Meta, pendiente de revisión
  * aparte), así que "engagement" y el `Post` genérico ("publicaciones
@@ -242,6 +243,16 @@ async function handleRequest(req: any, res: any) {
     ).sort()
     const followers = allDates.map((date) => ({ date: formatDateLabel(date), ...followersByDate.get(formatDateLabel(date))! }))
 
+    // --- Evolución diaria de Facebook (visitas/engagement/vídeo) — real,
+    // usada por su propio gráfico en vez del genérico "Engagement por
+    // plataforma" (que para Facebook no tiene datos de likes/comments). ---
+    const facebookDaily = facebookRows.map((r) => ({
+      date: formatDateLabel(r.date),
+      visitas: Number(r.impressions),
+      engagement: Number(r.engaged_users),
+      videoViews: Number(r.video_views),
+    }))
+
     // --- Alcance por plataforma (donut) — solo Instagram lo reporta hoy ---
     const totalAlcance = stats.reduce((s, x) => s + x.alcance, 0)
     const reach = stats.map((s) => ({
@@ -287,6 +298,7 @@ async function handleRequest(req: any, res: any) {
       reach,
       posts: [],
       facebookPosts: facebookPostCards,
+      facebookDaily,
     })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudo leer Redes Sociales desde Supabase.' })
