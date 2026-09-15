@@ -26,6 +26,27 @@ async function resolveClient(
   return rows[0] ?? null
 }
 
+const SUPABASE_PAGE_SIZE = 1000
+
+/** Lee todas las filas de una consulta paginando con Range — con rangos de
+ * fecha largos (hasta 24 meses) el total puede superar el límite por
+ * defecto de PostgREST de 1000 filas por respuesta. Necesario sobre todo en
+ * gsc_query_daily/gsc_page_daily, que tienen varias filas por día (una por
+ * consulta o página). */
+async function fetchAllRows<T>(url: string, headers: Record<string, string>, table: string): Promise<T[]> {
+  const all: T[] = []
+  let offset = 0
+  for (;;) {
+    const resp = await fetch(url, { headers: { ...headers, Range: `${offset}-${offset + SUPABASE_PAGE_SIZE - 1}` } })
+    if (!resp.ok) throw new Error(`Supabase respondió ${resp.status} al consultar ${table}.`)
+    const page = (await resp.json()) as T[]
+    all.push(...page)
+    if (page.length < SUPABASE_PAGE_SIZE) break
+    offset += SUPABASE_PAGE_SIZE
+  }
+  return all
+}
+
 function verifyToken(token: string, subject: string, secret: string): boolean {
   const [expiryStr, sig] = token.split('.')
   const expiry = Number(expiryStr)
@@ -168,9 +189,7 @@ async function handleRequest(req: any, res: any) {
     if (propertyId) {
       const query = new URLSearchParams({ client_id: `eq.${client.id}`, property_id: `eq.${propertyId}`, order: 'date.asc' })
       dateFilters(query)
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/ga4_daily?${query.toString()}`, { headers })
-      if (!resp.ok) throw new Error(`Supabase respondió ${resp.status} al consultar ga4_daily.`)
-      ga4Rows = (await resp.json()) as Ga4Row[]
+      ga4Rows = await fetchAllRows<Ga4Row>(`${SUPABASE_URL}/rest/v1/ga4_daily?${query.toString()}`, headers, 'ga4_daily')
     }
 
     const sessionsByDate = new Map<string, number>()
@@ -217,14 +236,10 @@ async function handleRequest(req: any, res: any) {
         dateFilters(q)
         return q
       }
-      const [queryResp, pageResp] = await Promise.all([
-        fetch(`${SUPABASE_URL}/rest/v1/gsc_query_daily?${baseQuery().toString()}`, { headers }),
-        fetch(`${SUPABASE_URL}/rest/v1/gsc_page_daily?${baseQuery().toString()}`, { headers }),
+      ;[queryRows, pageRows] = await Promise.all([
+        fetchAllRows<GscQueryRow>(`${SUPABASE_URL}/rest/v1/gsc_query_daily?${baseQuery().toString()}`, headers, 'gsc_query_daily'),
+        fetchAllRows<GscPageRow>(`${SUPABASE_URL}/rest/v1/gsc_page_daily?${baseQuery().toString()}`, headers, 'gsc_page_daily'),
       ])
-      if (!queryResp.ok) throw new Error(`Supabase respondió ${queryResp.status} al consultar gsc_query_daily.`)
-      if (!pageResp.ok) throw new Error(`Supabase respondió ${pageResp.status} al consultar gsc_page_daily.`)
-      queryRows = (await queryResp.json()) as GscQueryRow[]
-      pageRows = (await pageResp.json()) as GscPageRow[]
     }
 
     // Serie diaria + posición media ponderada por impresiones, a partir de
