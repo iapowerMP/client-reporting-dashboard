@@ -9,16 +9,19 @@
  * nivel de cuenta/canal (sin desglose por publicación). Facebook sí tiene
  * datos por publicación (facebook_posts, vía el edge /posts + Graph API
  * batch) — de ahí salen el conteo real de "Publicaciones", el campo
- * `facebookPosts` (imagen, tipo de media, shares, clics por publicación —
- * siempre las más recientes, SIN acotar por from/to: si el cliente lleva
- * meses sin publicar, seguimos mostrando lo último real en vez de un hueco
- * vacío) y `facebookDaily` (visitas/engagement/vídeo día a día, para su
- * propio gráfico). Los agregados "Publicaciones" y "Compartidos" del KPI
- * TAMPOCO respetan from/to (a propósito, igual que la galería): acotar por
- * 7d/30d/90d haría salir "0 publicaciones" aunque el cliente sí tenga
- * publicaciones reales ingeridas, solo que fuera del rango — sin
- * likes/comments individuales todavía (eso exige la feature "Page Public
- * Content Access" de Meta, pendiente de revisión aparte), así que
+ * `facebookPosts` (imagen, tipo de media, shares, clics por publicación) y
+ * `facebookDaily` (visitas/engagement/vídeo día a día, para su propio
+ * gráfico). Publicaciones/Compartidos/`facebookPosts`/`facebookDaily` SÍ
+ * respetan from/to (el selector de fechas de arriba) — la ingesta en n8n
+ * (workflow "CRD - Facebook Page to Supabase") ahora sincroniza siempre los
+ * últimos 3 meses desde hoy hacia atrás (antes no acotaba por fecha y se
+ * quedaba con lo primero que devolviera la API, lo que atascó la tabla con
+ * publicaciones antiguas de 2021-2025 y dejó de traer las recientes), así
+ * que un rango dentro de esos 3 meses siempre puede tener datos reales; un
+ * rango "Personalizado" más antiguo puede salir vacío si no hay
+ * publicaciones sincronizadas en esas fechas — eso es honesto, no un fallo.
+ * likes/comments individuales todavía no están (eso exige la feature "Page
+ * Public Content Access" de Meta, pendiente de revisión aparte), así que
  * "engagement" y el `Post` genérico ("publicaciones destacadas") se
  * devuelven vacíos con honestidad. "Alcance" solo existe para Instagram
  * (reach); Facebook e YouTube no exponen ese dato con los scopes de solo
@@ -170,15 +173,9 @@ async function handleRequest(req: any, res: any) {
       fetchDaily<FacebookRow>(SUPABASE_URL, headers, 'facebook_page_daily', 'page_id', facebookPageId, client.id, dateFilters),
       fetchDaily<InstagramRow>(SUPABASE_URL, headers, 'instagram_daily', 'ig_user_id', instagramId, client.id, dateFilters),
       fetchDaily<YoutubeRow>(SUPABASE_URL, headers, 'youtube_daily', 'channel_id', youtubeChannelId, client.id, dateFilters),
-      fetchFacebookPosts(SUPABASE_URL, headers, facebookPageId, client.id),
+      fetchFacebookPosts(SUPABASE_URL, headers, facebookPageId, client.id, from, to),
     ])
 
-    // "Publicaciones"/"Compartidos" NO respetan el periodo seleccionado (a
-    // propósito): son eventos esporádicos, igual que la galería de abajo —
-    // si acotáramos por 7d/30d/90d, un cliente que no ha publicado en ese
-    // rango vería "0 publicaciones" aunque sí tenga publicaciones reales
-    // (justo la confusión que reportó el cliente). Mejor mostrar el total
-    // real ingerido, coherente con lo que se ve en la galería.
     const stats: Array<{
       platform: SocialTabName
       seguidores: number
@@ -334,16 +331,18 @@ async function fetchDaily<T>(
   return (await resp.json()) as T[]
 }
 
-// Sin filtro de fecha a propósito: a diferencia de las métricas diarias, las
-// publicaciones son eventos esporádicos — si el cliente lleva meses sin
-// publicar, filtrar por "últimos 30 días" dejaría la galería vacía aunque sí
-// tengamos publicaciones reales que enseñar. El propio /api/social se
-// encarga de acotar por fecha solo el KPI "Publicaciones"/"Compartidos".
+// Filtra por from/to igual que las métricas diarias (dateFilters), atado al
+// selector de fechas de arriba. La ingesta en n8n sincroniza siempre los
+// últimos 3 meses desde hoy hacia atrás, así que cualquier rango dentro de
+// esa ventana puede traer datos reales; fuera de ella (p. ej. un rango
+// "Personalizado" más antiguo) puede salir vacío — honesto, no un fallo.
 async function fetchFacebookPosts(
   supabaseUrl: string,
   headers: Record<string, string>,
   pageId: string,
   clientId: string,
+  from: string,
+  to: string,
 ): Promise<FacebookPostRow[]> {
   if (!pageId) return []
   const query = new URLSearchParams({
@@ -352,6 +351,8 @@ async function fetchFacebookPosts(
     order: 'created_time.desc',
     select: 'post_id,created_time,message,permalink_url,image_url,media_type,shares,clicks',
   })
+  if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('created_time', `gte.${from}`)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('created_time', `lte.${to}T23:59:59`)
   const resp = await fetch(`${supabaseUrl}/rest/v1/facebook_posts?${query.toString()}`, { headers })
   if (!resp.ok) return []
   return (await resp.json()) as FacebookPostRow[]
