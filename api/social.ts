@@ -43,6 +43,25 @@ async function resolveClient(
   return rows[0] ?? null
 }
 
+const SUPABASE_PAGE_SIZE = 1000
+
+/** Lee todas las filas de una consulta paginando con Range — con rangos de
+ * fecha largos (hasta 24 meses) el total puede superar el límite por
+ * defecto de PostgREST de 1000 filas por respuesta. */
+async function fetchAllRows<T>(url: string, headers: Record<string, string>, table: string): Promise<T[]> {
+  const all: T[] = []
+  let offset = 0
+  for (;;) {
+    const resp = await fetch(url, { headers: { ...headers, Range: `${offset}-${offset + SUPABASE_PAGE_SIZE - 1}` } })
+    if (!resp.ok) throw new Error(`Supabase respondió ${resp.status} al consultar ${table}.`)
+    const page = (await resp.json()) as T[]
+    all.push(...page)
+    if (page.length < SUPABASE_PAGE_SIZE) break
+    offset += SUPABASE_PAGE_SIZE
+  }
+  return all
+}
+
 function verifyToken(token: string, subject: string, secret: string): boolean {
   const [expiryStr, sig] = token.split('.')
   const expiry = Number(expiryStr)
@@ -326,9 +345,7 @@ async function fetchDaily<T>(
   const query = new URLSearchParams({ client_id: `eq.${clientId}`, order: 'date.asc' })
   query.set(accountColumn, `eq.${accountId}`)
   dateFilters(query)
-  const resp = await fetch(`${supabaseUrl}/rest/v1/${table}?${query.toString()}`, { headers })
-  if (!resp.ok) throw new Error(`Supabase respondió ${resp.status} al consultar ${table}.`)
-  return (await resp.json()) as T[]
+  return fetchAllRows<T>(`${supabaseUrl}/rest/v1/${table}?${query.toString()}`, headers, table)
 }
 
 // Filtra por from/to igual que las métricas diarias (dateFilters), atado al
@@ -353,7 +370,5 @@ async function fetchFacebookPosts(
   })
   if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('created_time', `gte.${from}`)
   if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('created_time', `lte.${to}T23:59:59`)
-  const resp = await fetch(`${supabaseUrl}/rest/v1/facebook_posts?${query.toString()}`, { headers })
-  if (!resp.ok) return []
-  return (await resp.json()) as FacebookPostRow[]
+  return fetchAllRows<FacebookPostRow>(`${supabaseUrl}/rest/v1/facebook_posts?${query.toString()}`, headers, 'facebook_posts')
 }

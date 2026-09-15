@@ -24,6 +24,25 @@ async function resolveClient(
   return rows[0] ?? null
 }
 
+const SUPABASE_PAGE_SIZE = 1000
+
+/** Lee todas las filas de una consulta paginando con Range — con rangos de
+ * fecha largos (hasta 24 meses) el total puede superar el límite por
+ * defecto de PostgREST de 1000 filas por respuesta. */
+async function fetchAllRows<T>(url: string, headers: Record<string, string>, table: string): Promise<T[]> {
+  const all: T[] = []
+  let offset = 0
+  for (;;) {
+    const resp = await fetch(url, { headers: { ...headers, Range: `${offset}-${offset + SUPABASE_PAGE_SIZE - 1}` } })
+    if (!resp.ok) throw new Error(`Supabase respondió ${resp.status} al consultar ${table}.`)
+    const page = (await resp.json()) as T[]
+    all.push(...page)
+    if (page.length < SUPABASE_PAGE_SIZE) break
+    offset += SUPABASE_PAGE_SIZE
+  }
+  return all
+}
+
 function verifyToken(token: string, subject: string, secret: string): boolean {
   const [expiryStr, sig] = token.split('.')
   const expiry = Number(expiryStr)
@@ -113,9 +132,11 @@ async function handleRequest(req: any, res: any) {
         const query = new URLSearchParams({ client_id: `eq.${client.id}`, order: 'date.asc' })
         query.set(source.accountColumn, `eq.${accountId}`)
         dateFilters(query)
-        const resp = await fetch(`${SUPABASE_URL}/rest/v1/${source.table}?${query.toString()}`, { headers })
-        if (!resp.ok) throw new Error(`Supabase respondió ${resp.status} al consultar ${source.table}.`)
-        return await resp.json()
+        return fetchAllRows<{ date: string; cost: string | number; conversions: string | number; conversions_value: string | number }>(
+          `${SUPABASE_URL}/rest/v1/${source.table}?${query.toString()}`,
+          headers,
+          source.table,
+        )
       }),
     )
 
@@ -154,12 +175,13 @@ async function handleRequest(req: any, res: any) {
     if (ga4PropertyId) {
       const query = new URLSearchParams({ client_id: `eq.${client.id}`, property_id: `eq.${ga4PropertyId}`, order: 'date.asc' })
       dateFilters(query)
-      const resp = await fetch(`${SUPABASE_URL}/rest/v1/ga4_daily?${query.toString()}`, { headers })
-      if (resp.ok) {
-        const rows = (await resp.json()) as Array<{ date: string; sessions: string | number }>
-        for (const r of rows) {
-          seoByDate.set(r.date, (seoByDate.get(r.date) ?? 0) + Number(r.sessions))
-        }
+      const rows = await fetchAllRows<{ date: string; sessions: string | number }>(
+        `${SUPABASE_URL}/rest/v1/ga4_daily?${query.toString()}`,
+        headers,
+        'ga4_daily',
+      )
+      for (const r of rows) {
+        seoByDate.set(r.date, (seoByDate.get(r.date) ?? 0) + Number(r.sessions))
       }
     }
     const seoDates = Array.from(seoByDate.keys()).sort()
