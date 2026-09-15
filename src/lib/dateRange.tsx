@@ -14,7 +14,7 @@ interface DateRangeContextValue {
 
 const DateRangeContext = createContext<DateRangeContextValue | null>(null)
 
-export const MAX_CUSTOM_RANGE_DAYS = 92 // ~3 meses
+export const MAX_CUSTOM_RANGE_DAYS = 731 // ~24 meses
 
 function toIsoDate(d: Date): string {
   return d.toISOString().slice(0, 10)
@@ -53,7 +53,7 @@ export function getPreviousRange(range: DateRange): DateRange {
 }
 
 /** Valida un rango personalizado: fin >= inicio (mínimo 1 día), fin no futuro,
- * y un máximo de ~3 meses de amplitud. Devuelve un mensaje de error o null. */
+ * y un máximo de ~24 meses de amplitud. Devuelve un mensaje de error o null. */
 export function validateCustomRange(from: string, to: string): string | null {
   if (!from || !to) return 'Selecciona fecha de inicio y de fin.'
   const start = new Date(from)
@@ -66,7 +66,7 @@ export function validateCustomRange(from: string, to: string): string | null {
   today.setHours(0, 0, 0, 0)
   if (end > today) return 'La fecha de fin no puede ser futura.'
   const spanDays = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1
-  if (spanDays > MAX_CUSTOM_RANGE_DAYS) return 'El rango máximo es de 3 meses.'
+  if (spanDays > MAX_CUSTOM_RANGE_DAYS) return 'El rango máximo es de 24 meses.'
   return null
 }
 

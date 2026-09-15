@@ -84,7 +84,7 @@ export default function TopBar({ title, onOpenSidebar }: TopBarProps) {
             {pickerOpen && (
               <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-72 rounded-card border border-border bg-card p-4 shadow-lg">
                 <p className="mb-3 text-xs text-text-secondary">
-                  Elige un periodo (mínimo 1 día, máximo 3 meses).
+                  Elige un periodo (mínimo 1 día, máximo 24 meses).
                 </p>
                 <div className="space-y-3">
                   <label className="block">

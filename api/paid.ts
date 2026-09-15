@@ -44,6 +44,25 @@ async function resolveClient(
   return rows[0] ?? null
 }
 
+const SUPABASE_PAGE_SIZE = 1000
+
+/** Lee todas las filas de una consulta paginando con Range — con rangos de
+ * fecha largos (hasta 24 meses) el total puede superar el límite por
+ * defecto de PostgREST de 1000 filas por respuesta. */
+async function fetchAllRows<T>(url: string, headers: Record<string, string>, table: string): Promise<T[]> {
+  const all: T[] = []
+  let offset = 0
+  for (;;) {
+    const resp = await fetch(url, { headers: { ...headers, Range: `${offset}-${offset + SUPABASE_PAGE_SIZE - 1}` } })
+    if (!resp.ok) throw new Error(`Supabase respondió ${resp.status} al consultar ${table}.`)
+    const page = (await resp.json()) as T[]
+    all.push(...page)
+    if (page.length < SUPABASE_PAGE_SIZE) break
+    offset += SUPABASE_PAGE_SIZE
+  }
+  return all
+}
+
 function verifyToken(token: string, subject: string, secret: string): boolean {
   const [expiryStr, sig] = token.split('.')
   const expiry = Number(expiryStr)
@@ -183,11 +202,7 @@ async function handleRequest(req: any, res: any) {
         if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
         if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
 
-        const resp = await fetch(`${SUPABASE_URL}/rest/v1/${source.table}?${query.toString()}`, { headers })
-        if (!resp.ok) {
-          throw new Error(`Supabase respondió ${resp.status} al consultar ${source.table}.`)
-        }
-        return (await resp.json()) as CampaignRow[]
+        return fetchAllRows<CampaignRow>(`${SUPABASE_URL}/rest/v1/${source.table}?${query.toString()}`, headers, source.table)
       }),
     )
 
@@ -324,51 +339,48 @@ async function handleRequest(req: any, res: any) {
       const query = new URLSearchParams({ client_id: `eq.${client.id}`, ad_account_id: `eq.${metaAccountId}` })
       if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
       if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
-      const adsResp = await fetch(`${SUPABASE_URL}/rest/v1/meta_ad_daily?${query.toString()}`, { headers })
-      if (adsResp.ok) {
-        const adRows = (await adsResp.json()) as AdRow[]
-        const byAd = new Map<
-          string,
-          { adId: string; name: string; format: string; thumbnailUrl: string | null; impressions: number; clicks: number; cost: number; conversions: number; conversionsValue: number; frequencySum: number; days: number }
-        >()
-        for (const r of adRows) {
-          const cur = byAd.get(r.ad_id) ?? {
-            adId: r.ad_id,
-            name: r.ad_name,
-            format: r.format || 'otro',
-            thumbnailUrl: null,
-            impressions: 0,
-            clicks: 0,
-            cost: 0,
-            conversions: 0,
-            conversionsValue: 0,
-            frequencySum: 0,
-            days: 0,
-          }
-          cur.impressions += Number(r.impressions)
-          cur.clicks += Number(r.clicks)
-          cur.cost += Number(r.cost)
-          cur.conversions += Number(r.conversions)
-          cur.conversionsValue += Number(r.conversions_value)
-          cur.frequencySum += Number(r.frequency)
-          cur.days += 1
-          if (r.thumbnail_url) cur.thumbnailUrl = r.thumbnail_url
-          byAd.set(r.ad_id, cur)
+      const adRows = await fetchAllRows<AdRow>(`${SUPABASE_URL}/rest/v1/meta_ad_daily?${query.toString()}`, headers, 'meta_ad_daily')
+      const byAd = new Map<
+        string,
+        { adId: string; name: string; format: string; thumbnailUrl: string | null; impressions: number; clicks: number; cost: number; conversions: number; conversionsValue: number; frequencySum: number; days: number }
+      >()
+      for (const r of adRows) {
+        const cur = byAd.get(r.ad_id) ?? {
+          adId: r.ad_id,
+          name: r.ad_name,
+          format: r.format || 'otro',
+          thumbnailUrl: null,
+          impressions: 0,
+          clicks: 0,
+          cost: 0,
+          conversions: 0,
+          conversionsValue: 0,
+          frequencySum: 0,
+          days: 0,
         }
-        metaCreatives = Array.from(byAd.values()).map((c) => ({
-          adId: c.adId,
-          name: c.name,
-          format: c.format,
-          thumbnailUrl: c.thumbnailUrl,
-          impresiones: c.impressions,
-          clics: c.clicks,
-          ctr: c.impressions ? round2((c.clicks / c.impressions) * 100) : 0,
-          conversiones: round2(c.conversions),
-          costeConv: c.conversions ? round2(c.cost / c.conversions) : 0,
-          roas: c.cost ? round2(c.conversionsValue / c.cost) : 0,
-          frecuencia: c.days ? round2(c.frequencySum / c.days) : 0,
-        }))
+        cur.impressions += Number(r.impressions)
+        cur.clicks += Number(r.clicks)
+        cur.cost += Number(r.cost)
+        cur.conversions += Number(r.conversions)
+        cur.conversionsValue += Number(r.conversions_value)
+        cur.frequencySum += Number(r.frequency)
+        cur.days += 1
+        if (r.thumbnail_url) cur.thumbnailUrl = r.thumbnail_url
+        byAd.set(r.ad_id, cur)
       }
+      metaCreatives = Array.from(byAd.values()).map((c) => ({
+        adId: c.adId,
+        name: c.name,
+        format: c.format,
+        thumbnailUrl: c.thumbnailUrl,
+        impresiones: c.impressions,
+        clics: c.clicks,
+        ctr: c.impressions ? round2((c.clicks / c.impressions) * 100) : 0,
+        conversiones: round2(c.conversions),
+        costeConv: c.conversions ? round2(c.cost / c.conversions) : 0,
+        roas: c.cost ? round2(c.conversionsValue / c.cost) : 0,
+        frecuencia: c.days ? round2(c.frequencySum / c.days) : 0,
+      }))
     }
 
     res.status(200).json({
@@ -388,8 +400,6 @@ async function handleRequest(req: any, res: any) {
  *  mode=programmatic — publicidad programática (informes especiales)
  * ========================================================================== */
 
-const PROGRAMMATIC_PAGE_SIZE = 1000
-
 interface ProgrammaticRow {
   date: string
   campaign_name: string
@@ -404,10 +414,9 @@ interface ProgrammaticRow {
   frequency: string | number | null
 }
 
-/** Lee todas las filas de programmatic_daily para el rango pedido, paginando
- * con Range porque puede haber varios miles (muy por encima del límite por
- * defecto de PostgREST de 1000, a diferencia del resto de tablas de este
- * archivo). */
+/** Lee todas las filas de programmatic_daily para el rango pedido — puede
+ * haber varios miles, muy por encima del límite por defecto de PostgREST de
+ * 1000, así que usa fetchAllRows para paginar con Range. */
 async function fetchAllProgrammaticRows(
   supabaseUrl: string,
   headers: Record<string, string>,
@@ -418,20 +427,7 @@ async function fetchAllProgrammaticRows(
   const query = new URLSearchParams({ client_id: `eq.${clientId}`, order: 'date.asc' })
   if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
   if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
-
-  const all: ProgrammaticRow[] = []
-  let offset = 0
-  for (;;) {
-    const resp = await fetch(`${supabaseUrl}/rest/v1/programmatic_daily?${query.toString()}`, {
-      headers: { ...headers, Range: `${offset}-${offset + PROGRAMMATIC_PAGE_SIZE - 1}` },
-    })
-    if (!resp.ok) throw new Error(`Supabase respondió ${resp.status} al consultar programmatic_daily.`)
-    const page = (await resp.json()) as ProgrammaticRow[]
-    all.push(...page)
-    if (page.length < PROGRAMMATIC_PAGE_SIZE) break
-    offset += PROGRAMMATIC_PAGE_SIZE
-  }
-  return all
+  return fetchAllRows<ProgrammaticRow>(`${supabaseUrl}/rest/v1/programmatic_daily?${query.toString()}`, headers, 'programmatic_daily')
 }
 
 /** Extrae el tamaño IAB del nombre de archivo de la creatividad (ej.
