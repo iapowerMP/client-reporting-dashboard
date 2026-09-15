@@ -20,14 +20,22 @@
  *      body (la página y el token siempre se resuelven frescos en Supabase).
  *
  * Ambas rutas convergen en "Cliente Facebook" → "Buscar pagina y token"
- * (Postgres) + "Calcular rango de fechas" (últimos 30 días), y desde ahí se
- * ramifica en dos ingestas independientes (si una falla no bloquea la otra):
+ * (Postgres) + "Calcular rango de fechas" (calcula DOS ventanas: últimos 30
+ * días para Insights, últimos 90 días/3 meses para Publicaciones), y desde
+ * ahí se ramifica en dos ingestas independientes (si una falla no bloquea la
+ * otra):
  *   A) "Insights de la pagina" (HTTP: page_follows/page_views_total/
  *      page_post_engagements/page_video_views por día) → "Transformar a SQL
  *      upsert" → Postgres — tabla facebook_page_daily.
  *   B) "Publicaciones de la pagina" (HTTP: GET /posts — id/message/
- *      created_time/permalink_url/shares/full_picture/attachments, hasta 100
- *      más recientes) → dos sub-ramas:
+ *      created_time/permalink_url/shares/full_picture/attachments, acotado
+ *      con since/until a los ULTIMOS 3 MESES, hasta 100 por llamada — antes
+ *      no llevaba since/until y dependía del orden por defecto de la API,
+ *      lo que en la práctica atascó la tabla con publicaciones antiguas
+ *      -2021/2025- y dejó de traer las recientes: mejor una ventana de 3
+ *      meses explícita, corriendo cada día desde hoy hacia atrás, que
+ *      arriesgarse a que un límite de fila se coma los meses más nuevos) →
+ *      dos sub-ramas:
  *        B1) "Transformar publicaciones a SQL upsert" → Postgres — tabla
  *            facebook_posts (conteo real de "Publicaciones", antes fijo a
  *            0, más imagen/tipo de media de cada publicación).
@@ -189,13 +197,15 @@ const dateRange = node({
       jsCode: `const toIso = (d) => d.toISOString().slice(0, 10);
 const end = new Date();
 end.setUTCDate(end.getUTCDate() - 1); // ayer (hoy aun no ha cerrado el dia)
-const start = new Date(end);
-start.setUTCDate(start.getUTCDate() - 29); // ultimos 30 dias, terminando en "end"
-return { json: { ...$json, since: toIso(start), until: toIso(end) } };`,
+const start30 = new Date(end);
+start30.setUTCDate(start30.getUTCDate() - 29); // ultimos 30 dias, terminando en "end" (Insights)
+const start90 = new Date(end);
+start90.setUTCDate(start90.getUTCDate() - 89); // ultimos 90 dias / 3 meses (Publicaciones)
+return { json: { ...$json, since: toIso(start30), until: toIso(end), postsSince: toIso(start90), postsUntil: toIso(end) } };`,
     },
     position: [1120, 300],
   },
-  output: [{ client_id: '', page_id: '', oauth_access_token: '', since: '', until: '' }],
+  output: [{ client_id: '', page_id: '', oauth_access_token: '', since: '', until: '', postsSince: '', postsUntil: '' }],
 })
 
 const fetchInsights = node({
@@ -299,6 +309,8 @@ const fetchPosts = node({
         parameters: [
           { name: 'fields', value: 'id,message,created_time,permalink_url,shares,full_picture,attachments{media_type,url}' },
           { name: 'limit', value: '100' },
+          { name: 'since', value: expr('{{ $("Calcular rango de fechas").item.json.postsSince }}') },
+          { name: 'until', value: expr('{{ $("Calcular rango de fechas").item.json.postsUntil }}') },
           { name: 'access_token', value: expr('{{ $("Buscar pagina y token").item.json.oauth_access_token }}') },
         ],
       },

@@ -630,21 +630,18 @@ export function computeSocialKpis(
   // es directamente una métrica que no existe: mejor no mostrarla.
   const showAlcance = tab === 'Instagram'
 
-  // Solo en Facebook "Publicaciones" (y "Compartidos") no dependen del rango
-  // de fechas seleccionado: son eventos esporádicos, no una métrica diaria —
-  // acotarlos por 7d/30d/90d haría salir "0" aunque el cliente sí tenga
-  // publicaciones reales, solo que fuera del rango (justo lo que confundía
-  // al cliente). En YouTube, en cambio, "Publicaciones" sí sigue siendo el
-  // nº de vídeos nuevos dentro del rango — la etiqueta solo cambia donde
-  // aplica, para no dar a entender lo contrario en la otra plataforma.
-  const publicacionesLabel = tab === 'Facebook' ? 'Publicaciones (todas)' : 'Publicaciones'
+  // "Publicaciones" (y en Facebook, "Compartidos") respetan el rango de
+  // fechas del selector de arriba, igual que el resto de KPIs. La ingesta de
+  // n8n sincroniza siempre los últimos 3 meses desde hoy hacia atrás, así
+  // que un rango dentro de esa ventana puede tener datos reales.
+  const publicacionesLabel = 'Publicaciones'
 
   // Facebook tiene dos métricas reales que no existen (todavía) para el
   // resto de plataformas: vistas de vídeo (page_video_views) y compartidos
-  // totales (suma de shares por publicación, tampoco por rango). Se añaden
+  // totales (suma de shares por publicación, del mismo rango). Se añaden
   // como tarjetas extra solo en esa pestaña en vez de forzarlas en el grid
   // común de 6.
-  const extraLabels = tab === 'Facebook' ? ['Visualizaciones de vídeo', 'Compartidos (todos)'] : []
+  const extraLabels = tab === 'Facebook' ? ['Visualizaciones de vídeo', 'Compartidos'] : []
 
   const s = data.find((x) => x.platform === tab)
   if (!s) {
@@ -668,7 +665,7 @@ export function computeSocialKpis(
     ...(tab === 'Facebook'
       ? [
           { label: 'Visualizaciones de vídeo', value: formatNumber(s.videoViews) },
-          { label: 'Compartidos (todos)', value: formatNumber(s.compartidos) },
+          { label: 'Compartidos', value: formatNumber(s.compartidos) },
         ]
       : []),
   ]

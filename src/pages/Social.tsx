@@ -310,10 +310,7 @@ export default function Social() {
             </div>
           </ChartCard>
 
-          <ChartCard
-            title="Publicaciones con más compartidos"
-            action={<span className="text-xs text-text-secondary">Histórico, no depende del rango</span>}
-          >
+          <ChartCard title="Publicaciones con más compartidos">
             {topPostsByShares.length === 0 ? (
               <p className="py-8 text-center text-sm text-text-secondary">
                 No hay publicaciones para esta plataforma.
@@ -416,9 +413,6 @@ export default function Social() {
         action={
           showFacebookGallery ? (
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-xs text-text-secondary">
-                Publicaciones reales, no depende del rango de fechas
-              </span>
               <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
                 {FACEBOOK_POST_SORTS.map((opt) => (
                   <button
