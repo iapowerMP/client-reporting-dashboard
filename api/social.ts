@@ -13,13 +13,16 @@
  * siempre las más recientes, SIN acotar por from/to: si el cliente lleva
  * meses sin publicar, seguimos mostrando lo último real en vez de un hueco
  * vacío) y `facebookDaily` (visitas/engagement/vídeo día a día, para su
- * propio gráfico). Los agregados "Publicaciones" y "Compartidos" del KPI SÍ
- * respetan from/to — pero sin likes/comments individuales todavía (eso exige
- * la feature "Page Public Content Access" de Meta, pendiente de revisión
- * aparte), así que "engagement" y el `Post` genérico ("publicaciones
- * destacadas") se devuelven vacíos con honestidad. "Alcance" solo existe
- * para Instagram (reach); Facebook e YouTube no exponen ese dato con los
- * scopes de solo lectura usados aquí.
+ * propio gráfico). Los agregados "Publicaciones" y "Compartidos" del KPI
+ * TAMPOCO respetan from/to (a propósito, igual que la galería): acotar por
+ * 7d/30d/90d haría salir "0 publicaciones" aunque el cliente sí tenga
+ * publicaciones reales ingeridas, solo que fuera del rango — sin
+ * likes/comments individuales todavía (eso exige la feature "Page Public
+ * Content Access" de Meta, pendiente de revisión aparte), así que
+ * "engagement" y el `Post` genérico ("publicaciones destacadas") se
+ * devuelven vacíos con honestidad. "Alcance" solo existe para Instagram
+ * (reach); Facebook e YouTube no exponen ese dato con los scopes de solo
+ * lectura usados aquí.
  */
 import { timingSafeEqual, createHmac } from 'crypto'
 
@@ -170,19 +173,12 @@ async function handleRequest(req: any, res: any) {
       fetchFacebookPosts(SUPABASE_URL, headers, facebookPageId, client.id),
     ])
 
-    // "Publicaciones"/"Compartidos" sí respetan el periodo seleccionado (7d/
-    // 30d/90d/personalizado): si el cliente no publicó nada en ese rango, es
-    // honesto que salga 0 — la galería de abajo, en cambio, siempre enseña
-    // las publicaciones reales más recientes, sin importar el rango.
-    const isWithinRange = (iso: string | null) => {
-      if (!iso) return false
-      const date = iso.slice(0, 10)
-      if (/^\d{4}-\d{2}-\d{2}$/.test(from) && date < from) return false
-      if (/^\d{4}-\d{2}-\d{2}$/.test(to) && date > to) return false
-      return true
-    }
-    const facebookPostsInRange = facebookPosts.filter((p) => isWithinRange(p.created_time))
-
+    // "Publicaciones"/"Compartidos" NO respetan el periodo seleccionado (a
+    // propósito): son eventos esporádicos, igual que la galería de abajo —
+    // si acotáramos por 7d/30d/90d, un cliente que no ha publicado en ese
+    // rango vería "0 publicaciones" aunque sí tenga publicaciones reales
+    // (justo la confusión que reportó el cliente). Mejor mostrar el total
+    // real ingerido, coherente con lo que se ve en la galería.
     const stats: Array<{
       platform: SocialTabName
       seguidores: number
@@ -199,7 +195,7 @@ async function handleRequest(req: any, res: any) {
       const impresiones = facebookRows.reduce((s, r) => s + Number(r.impressions), 0)
       const engaged = facebookRows.reduce((s, r) => s + Number(r.engaged_users), 0)
       const videoViews = facebookRows.reduce((s, r) => s + Number(r.video_views), 0)
-      const compartidos = facebookPostsInRange.reduce((s, p) => s + Number(p.shares), 0)
+      const compartidos = facebookPosts.reduce((s, p) => s + Number(p.shares), 0)
       stats.push({
         platform: 'Facebook',
         seguidores: Number(facebookRows[facebookRows.length - 1].followers),
@@ -207,7 +203,7 @@ async function handleRequest(req: any, res: any) {
         alcance: 0,
         impresiones,
         engagementRate: impresiones ? round2((engaged / impresiones) * 100) : 0,
-        publicaciones: facebookPostsInRange.length,
+        publicaciones: facebookPosts.length,
         videoViews,
         compartidos,
       })
