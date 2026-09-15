@@ -10,6 +10,7 @@ import Social from './pages/Social'
 import Settings from './pages/Settings'
 import PrivacyPolicy from './pages/PrivacyPolicy'
 import DataDeletion from './pages/DataDeletion'
+import TermsOfService from './pages/TermsOfService'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
       <Route path="/" element={<ClientPicker />} />
       <Route path="/politica-privacidad" element={<PrivacyPolicy />} />
       <Route path="/eliminacion-datos" element={<DataDeletion />} />
+      <Route path="/condiciones-servicio" element={<TermsOfService />} />
       <Route path="/admin" element={<Admin />} />
       <Route path="/c/:clientSlug" element={<ClientLayout />}>
         <Route index element={<Overview />} />
