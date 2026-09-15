@@ -21,7 +21,7 @@ import ChartTooltip from '@/components/shared/ChartTooltip'
 import Tabs from '@/components/shared/Tabs'
 import KpiCard from '@/components/shared/KpiCard'
 import PlatformBadge from '@/components/shared/PlatformBadge'
-import { formatCompact, formatNumber } from '@/lib/utils'
+import { cn, formatCompact, formatNumber } from '@/lib/utils'
 import {
   SOCIAL_PLATFORMS,
   SOCIAL_TAB_TO_CONNECTION,
@@ -129,10 +129,19 @@ function FacebookPostGalleryCard({ post }: { post: FacebookPostCard }) {
   )
 }
 
+type FacebookPostSort = 'recientes' | 'compartidos' | 'clics'
+
+const FACEBOOK_POST_SORTS: Array<{ value: FacebookPostSort; label: string }> = [
+  { value: 'recientes', label: 'Fecha' },
+  { value: 'compartidos', label: 'Compartidos' },
+  { value: 'clics', label: 'Clics' },
+]
+
 export default function Social() {
   const { clientSlug = '' } = useParams()
   const { isVisible } = useReportConfig()
   const [tab, setTab] = useState<SocialTab>('Todas')
+  const [postSort, setPostSort] = useState<FacebookPostSort>('recientes')
   const { range } = useDateRange()
   const { data, loading, error } = useAsyncData(
     () => getProvider().getSocial(clientSlug, range),
@@ -178,6 +187,18 @@ export default function Social() {
       ? data.posts.filter((p) => visiblePlatforms.includes(p.platform))
       : data.posts.filter((p) => p.platform === activeTab)
   const showFacebookGallery = activeTab === 'Facebook'
+
+  // Galería de Facebook: además de por fecha (orden por defecto, tal cual
+  // llega de /api/social), se puede reordenar por compartidos o clics — las
+  // únicas métricas reales por publicación que tenemos hoy (sin alcance ni
+  // likes/comments, que exigen la feature "Page Public Content Access").
+  const sortedFacebookPosts = showFacebookGallery
+    ? [...data.facebookPosts].sort((a, b) => {
+        if (postSort === 'compartidos') return b.shares - a.shares
+        if (postSort === 'clics') return b.clicks - a.clicks
+        return 0
+      })
+    : data.facebookPosts
 
   // En la pestaña Facebook, "Engagement por plataforma" y "Alcance por
   // plataforma" siempre saldrían vacíos (no tenemos esos datos todavía) —
@@ -394,20 +415,38 @@ export default function Social() {
         title="Publicaciones destacadas"
         action={
           showFacebookGallery ? (
-            <span className="text-xs text-text-secondary">
-              Últimas publicaciones reales, no depende del rango de fechas
-            </span>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs text-text-secondary">
+                Publicaciones reales, no depende del rango de fechas
+              </span>
+              <div className="flex items-center gap-1 rounded-md border border-border p-0.5">
+                {FACEBOOK_POST_SORTS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setPostSort(opt.value)}
+                    className={cn(
+                      'rounded px-2 py-1 text-xs font-medium transition-colors',
+                      postSort === opt.value
+                        ? 'bg-accent/20 text-accent'
+                        : 'text-text-secondary hover:text-white',
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : undefined
         }
       >
         {showFacebookGallery ? (
-          data.facebookPosts.length === 0 ? (
+          sortedFacebookPosts.length === 0 ? (
             <p className="py-8 text-center text-sm text-text-secondary">
               No hay publicaciones para esta plataforma.
             </p>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {data.facebookPosts.map((post) => (
+              {sortedFacebookPosts.map((post) => (
                 <FacebookPostGalleryCard key={post.id} post={post} />
               ))}
             </div>
