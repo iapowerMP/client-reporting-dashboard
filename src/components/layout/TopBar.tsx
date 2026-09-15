@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
-import { Menu, Download, Calendar } from 'lucide-react'
+import { Menu, Download, Calendar, GitCompare, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useDateRange, validateCustomRange } from '@/lib/dateRange'
+import { useDateRange, validateCustomRange, getPreviousRange } from '@/lib/dateRange'
 
 interface TopBarProps {
   title: string
@@ -11,11 +11,26 @@ interface TopBarProps {
 const PRESETS = ['7d', '30d', '90d'] as const
 
 export default function TopBar({ title, onOpenSidebar }: TopBarProps) {
-  const { preset, range, label, setPreset, setCustomRange } = useDateRange()
+  const {
+    preset,
+    range,
+    label,
+    setPreset,
+    setCustomRange,
+    compareEnabled,
+    compareRange,
+    compareLabel,
+    setCompareEnabled,
+    setCompareRange,
+  } = useDateRange()
   const [pickerOpen, setPickerOpen] = useState(false)
   const [draftFrom, setDraftFrom] = useState(range.from)
   const [draftTo, setDraftTo] = useState(range.to)
   const [draftError, setDraftError] = useState<string | null>(null)
+  const [comparePickerOpen, setComparePickerOpen] = useState(false)
+  const [compareDraftFrom, setCompareDraftFrom] = useState(range.from)
+  const [compareDraftTo, setCompareDraftTo] = useState(range.from)
+  const [compareDraftError, setCompareDraftError] = useState<string | null>(null)
   const todayRef = useRef(new Date().toISOString().slice(0, 10))
 
   const openPicker = () => {
@@ -33,6 +48,39 @@ export default function TopBar({ title, onOpenSidebar }: TopBarProps) {
     }
     setCustomRange(draftFrom, draftTo)
     setPickerOpen(false)
+  }
+
+  const openComparePicker = () => {
+    const base = compareRange ?? getPreviousRange(range)
+    setCompareDraftFrom(base.from)
+    setCompareDraftTo(base.to)
+    setCompareDraftError(null)
+    setComparePickerOpen((v) => !v)
+  }
+
+  const applyCompare = () => {
+    const err = validateCustomRange(compareDraftFrom, compareDraftTo)
+    if (err) {
+      setCompareDraftError(err)
+      return
+    }
+    setCompareRange(compareDraftFrom, compareDraftTo)
+    setComparePickerOpen(false)
+  }
+
+  const toggleCompare = () => {
+    if (compareEnabled) {
+      // Ya activada: el botón principal abre el selector para editar el
+      // periodo B (desactivar es solo la X).
+      openComparePicker()
+      return
+    }
+    setCompareEnabled(true)
+    const base = compareRange ?? getPreviousRange(range)
+    setCompareDraftFrom(base.from)
+    setCompareDraftTo(base.to)
+    setCompareDraftError(null)
+    setComparePickerOpen(true)
   }
 
   return (
@@ -122,6 +170,89 @@ export default function TopBar({ title, onOpenSidebar }: TopBarProps) {
                   </button>
                   <button
                     onClick={applyCustom}
+                    className="rounded-control bg-accent px-3 py-1.5 text-xs font-semibold text-black hover:opacity-90"
+                  >
+                    Aplicar
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Comparar con un segundo periodo */}
+          <div className="relative">
+            <button
+              onClick={toggleCompare}
+              className={cn(
+                'flex items-center gap-1.5 rounded-control border px-3 py-1.5 text-xs font-semibold transition-colors',
+                compareEnabled
+                  ? 'border-accent/60 bg-accent/10 text-accent'
+                  : 'border-border bg-card text-text-secondary hover:text-white',
+              )}
+            >
+              <GitCompare className="h-3.5 w-3.5" />
+              {compareEnabled && compareLabel ? `vs ${compareLabel}` : 'Comparar'}
+              {compareEnabled && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setCompareEnabled(false)
+                    setComparePickerOpen(false)
+                  }}
+                  className="ml-0.5 rounded-full p-0.5 hover:bg-white/10"
+                  aria-label="Quitar comparación"
+                >
+                  <X className="h-3 w-3" />
+                </span>
+              )}
+            </button>
+
+            {comparePickerOpen && (
+              <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-72 rounded-card border border-border bg-card p-4 shadow-lg">
+                <p className="mb-3 text-xs text-text-secondary">
+                  Elige el periodo B a comparar contra {label} (mínimo 1 día, máximo 24 meses).
+                </p>
+                <div className="space-y-3">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-text-secondary">
+                      Desde
+                    </span>
+                    <input
+                      type="date"
+                      value={compareDraftFrom}
+                      max={todayRef.current}
+                      onChange={(e) => setCompareDraftFrom(e.target.value)}
+                      className="w-full rounded-control border border-border bg-base px-2 py-1.5 text-sm text-white focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
+                    />
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-text-secondary">
+                      Hasta
+                    </span>
+                    <input
+                      type="date"
+                      value={compareDraftTo}
+                      max={todayRef.current}
+                      onChange={(e) => setCompareDraftTo(e.target.value)}
+                      className="w-full rounded-control border border-border bg-base px-2 py-1.5 text-sm text-white focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
+                    />
+                  </label>
+                </div>
+                {compareDraftError && <p className="mt-2 text-xs text-negative">{compareDraftError}</p>}
+                <div className="mt-3 flex justify-end gap-2">
+                  <button
+                    onClick={() => {
+                      setComparePickerOpen(false)
+                      if (!compareRange) setCompareEnabled(false)
+                    }}
+                    className="rounded-control border border-border px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-white/5"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={applyCompare}
                     className="rounded-control bg-accent px-3 py-1.5 text-xs font-semibold text-black hover:opacity-90"
                   >
                     Aplicar

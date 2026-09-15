@@ -10,6 +10,15 @@ interface DateRangeContextValue {
   label: string
   setPreset: (preset: '7d' | '30d' | '90d') => void
   setCustomRange: (from: string, to: string) => void
+  /** Comparación manual: el usuario elige un segundo periodo (periodo B)
+   * para comparar contra `range` (periodo A) en KPIs y gráficas. Distinto
+   * del periodo anterior automático que usan los KPIs por debajo cuando la
+   * comparación está desactivada (ver getPreviousRange). */
+  compareEnabled: boolean
+  compareRange: DateRange | null
+  compareLabel: string | null
+  setCompareEnabled: (enabled: boolean) => void
+  setCompareRange: (from: string, to: string) => void
 }
 
 const DateRangeContext = createContext<DateRangeContextValue | null>(null)
@@ -73,11 +82,15 @@ export function validateCustomRange(from: string, to: string): string | null {
 export function DateRangeProvider({ children }: { children: ReactNode }) {
   const [preset, setPresetState] = useState<RangePreset>('30d')
   const [custom, setCustom] = useState<DateRange>({ from: daysAgo(29), to: daysAgo(0) })
+  const [compareEnabled, setCompareEnabledState] = useState(false)
+  const [compareRange, setCompareRangeState] = useState<DateRange | null>(null)
 
   const value = useMemo<DateRangeContextValue>(() => {
     const range: DateRange =
       preset === 'custom' ? custom : { from: daysAgo(PRESET_DAYS[preset]), to: daysAgo(0) }
     const label = preset === 'custom' ? `${formatEs(custom.from)} – ${formatEs(custom.to)}` : PRESET_LABELS[preset]
+    const compareLabel =
+      compareEnabled && compareRange ? `${formatEs(compareRange.from)} – ${formatEs(compareRange.to)}` : null
     return {
       preset,
       range,
@@ -87,8 +100,21 @@ export function DateRangeProvider({ children }: { children: ReactNode }) {
         setCustom({ from, to })
         setPresetState('custom')
       },
+      compareEnabled,
+      compareRange,
+      compareLabel,
+      setCompareEnabled: (enabled) => {
+        setCompareEnabledState(enabled)
+        // Al activar por primera vez, se propone el periodo anterior de la
+        // misma duración como punto de partida — el usuario puede cambiarlo
+        // libremente después con el segundo selector.
+        if (enabled && !compareRange) {
+          setCompareRangeState(getPreviousRange(range))
+        }
+      },
+      setCompareRange: (from, to) => setCompareRangeState({ from, to }),
     }
-  }, [preset, custom])
+  }, [preset, custom, compareEnabled, compareRange])
 
   return <DateRangeContext.Provider value={value}>{children}</DateRangeContext.Provider>
 }

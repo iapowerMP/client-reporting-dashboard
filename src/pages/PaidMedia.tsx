@@ -373,7 +373,8 @@ function TargetProgress({
 interface ComboRow {
   date: string
   eficiencia: number
-  [platform: string]: number | string
+  eficienciaComparacion?: number | null
+  [platform: string]: number | string | null | undefined
 }
 
 /** Construye los datos del combo chart: barras = leads/ingresos por día
@@ -412,10 +413,26 @@ function buildComboData(
   }))
 }
 
+/** Serie de eficiencia (CPL/ROAS) del periodo de comparación, por posición
+ * de día (día 1, día 2...) en vez de fecha real — los dos periodos pueden
+ * ser de fechas distintas y hasta de duración distinta. Se usa como línea
+ * discontinua superpuesta al combo chart del periodo activo. */
+function buildCompareEfficiencySeries(
+  invConv: { date: string; inversion: number; conversiones: number; ingresos: number }[],
+  invConvByPlatform: Record<string, { date: string; inversion: number; conversiones: number; ingresos: number }[]>,
+  activeTab: PaidTab,
+  businessType: BusinessType,
+): number[] {
+  const efficiencyOf = (inversion: number, conversiones: number, ingresos: number) =>
+    businessType === 'ecommerce' ? (inversion ? round2(ingresos / inversion) : 0) : conversiones ? round2(inversion / conversiones) : 0
+  const series = activeTab === 'Todas' ? invConv : invConvByPlatform[activeTab] ?? []
+  return series.map((p) => efficiencyOf(p.inversion, p.conversiones, p.ingresos))
+}
+
 export default function PaidMedia() {
   const { clientSlug = '' } = useParams()
   const { isVisible } = useReportConfig()
-  const { range, label: rangeLabel } = useDateRange()
+  const { range, label: rangeLabel, compareEnabled, compareRange, compareLabel } = useDateRange()
   const clientInfo = useOutletContext<ReturnType<typeof useClientInfo>>()
   const businessType = clientInfo.data?.businessType ?? null
   const cplTarget = clientInfo.data?.cplTarget ?? null
@@ -427,13 +444,15 @@ export default function PaidMedia() {
     () => getProvider().getPaid(clientSlug, range),
     [clientSlug, range.from, range.to],
   )
-  // Periodo anterior (misma duración) solo para calcular la variación % de
-  // los KPIs — si tarda o falla, los KPIs simplemente se muestran sin delta
-  // en vez de bloquear la vista principal.
-  const previousRange = getPreviousRange(range)
+  // Periodo de comparación para la variación % de los KPIs y la línea
+  // discontinua de las gráficas: si el usuario activó "Comparar" con un
+  // periodo B manual se usa ese; si no, el periodo anterior (misma
+  // duración) de forma automática y silenciosa — si tarda o falla, los KPIs
+  // simplemente se muestran sin delta en vez de bloquear la vista principal.
+  const compareRangeEffective = compareEnabled && compareRange ? compareRange : getPreviousRange(range)
   const { data: prevData } = useAsyncData(
-    () => getProvider().getPaid(clientSlug, previousRange),
-    [clientSlug, previousRange.from, previousRange.to],
+    () => getProvider().getPaid(clientSlug, compareRangeEffective),
+    [clientSlug, compareRangeEffective.from, compareRangeEffective.to],
   )
 
   // Solo se muestran las plataformas activadas en Configuración.
@@ -461,6 +480,8 @@ export default function PaidMedia() {
       revenueTargetMonthly={revenueTargetMonthly}
       range={range}
       rangeLabel={rangeLabel}
+      compareEnabled={compareEnabled}
+      compareLabel={compareLabel}
     />
   )
 }
@@ -477,6 +498,8 @@ function PaidMediaTabs({
   revenueTargetMonthly,
   range,
   rangeLabel,
+  compareEnabled,
+  compareLabel,
 }: {
   data: PaidData
   prevData: PaidData | null
@@ -489,6 +512,8 @@ function PaidMediaTabs({
   revenueTargetMonthly: number | null
   range: DateRange
   rangeLabel: string
+  compareEnabled: boolean
+  compareLabel: string | null
 }) {
   const [tab, setTab] = useState<PaidTab>('Todas')
   const activeTab: PaidTab = visibleTabs.includes(tab) ? tab : 'Todas'
@@ -511,7 +536,14 @@ function PaidMediaTabs({
   const proratedLeadsTarget = leadsTargetMonthly != null ? round2((leadsTargetMonthly * days) / 30) : null
   const proratedRevenueTarget = revenueTargetMonthly != null ? round2((revenueTargetMonthly * days) / 30) : null
 
-  const comboData = buildComboData(data.invConv, data.invConvByPlatform, activeTab, visiblePlatforms, businessType)
+  const comboDataRaw = buildComboData(data.invConv, data.invConvByPlatform, activeTab, visiblePlatforms, businessType)
+  const compareEfficiencySeries =
+    compareEnabled && prevData
+      ? buildCompareEfficiencySeries(prevData.invConv, prevData.invConvByPlatform, activeTab, businessType)
+      : null
+  const comboData: ComboRow[] = compareEfficiencySeries
+    ? comboDataRaw.map((row, i) => ({ ...row, eficienciaComparacion: compareEfficiencySeries[i] ?? null }))
+    : comboDataRaw
   const comboTitle =
     activeTab === 'Todas'
       ? `${conversionLabel(businessType)} vs ${efficiencyLabel(businessType)} por plataforma — ${rangeLabel}`
@@ -666,6 +698,19 @@ function PaidMediaTabs({
                 strokeWidth={2}
                 dot={{ r: 2, fill: '#FFFFFF' }}
               />
+              {compareEnabled && compareEfficiencySeries && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="eficienciaComparacion"
+                  name={`${efficiencyLabel(businessType)} (${compareLabel ?? 'periodo B'})`}
+                  stroke="#9CA3AF"
+                  strokeWidth={2}
+                  strokeDasharray="5 5"
+                  dot={{ r: 2, fill: '#9CA3AF' }}
+                  connectNulls
+                />
+              )}
               {target != null && (
                 <ReferenceLine
                   yAxisId="right"
