@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { ArrowRight, LogOut, Plus } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ArrowRight, LayoutDashboard, LogOut, Plus } from 'lucide-react'
 import { useSession } from '@/lib/session'
 import { authHeaders } from '@/lib/authToken'
 import Login from './Login'
@@ -61,13 +62,24 @@ function ClientList() {
             </span>
             <span className="text-lg font-extrabold tracking-tight text-white">MEDIA POWER</span>
           </div>
-          <button
-            onClick={session.logout}
-            className="flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-white"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-            Cerrar sesión
-          </button>
+          <div className="flex items-center gap-4">
+            {user.role === 'admin' && (
+              <Link
+                to="/admin"
+                className="flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-white"
+              >
+                <LayoutDashboard className="h-3.5 w-3.5" />
+                Panel de administración
+              </Link>
+            )}
+            <button
+              onClick={session.logout}
+              className="flex items-center gap-1.5 text-xs font-medium text-text-secondary hover:text-white"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              Cerrar sesión
+            </button>
+          </div>
         </div>
 
         <h1 className="mb-1 text-2xl font-bold text-white">
