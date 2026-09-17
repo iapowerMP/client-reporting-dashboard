@@ -40,6 +40,11 @@ interface ClientInfoState {
   data: ClientInfo | null
   loading: boolean
   error: string | null
+  /** true si la URL no corresponde a ningún cliente — distinto de un error
+   * de red o de falta de acceso, para poder avisar con un mensaje claro en
+   * vez de mostrar el informe vacío (afecta incluso a un admin, que si no
+   * tendría "acceso implícito" a un cliente que ni siquiera existe). */
+  notFound: boolean
 }
 
 export function useClientInfo(clientSlug: string) {
@@ -47,16 +52,26 @@ export function useClientInfo(clientSlug: string) {
     data: null,
     loading: true,
     error: null,
+    notFound: false,
   })
 
   const refetch = useCallback(async () => {
     if (!clientSlug) return
-    setState((s) => ({ ...s, loading: true, error: null }))
+    setState((s) => ({ ...s, loading: true, error: null, notFound: false }))
     try {
       const res = await fetch(`/api/clients?slug=${encodeURIComponent(clientSlug)}`, {
         headers: { Accept: 'application/json', ...authHeaders() },
       })
-      if (!res.ok) throw new Error(`El servidor respondió ${res.status}`)
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setState({
+          data: null,
+          loading: false,
+          error: body.error ?? `El servidor respondió ${res.status}`,
+          notFound: res.status === 404,
+        })
+        return
+      }
       const body = await res.json()
       const row = body.client
       setState({
@@ -79,12 +94,14 @@ export function useClientInfo(clientSlug: string) {
         },
         loading: false,
         error: null,
+        notFound: false,
       })
     } catch (e) {
       setState({
         data: null,
         loading: false,
         error: e instanceof Error ? e.message : 'No se pudo cargar el cliente.',
+        notFound: false,
       })
     }
   }, [clientSlug])

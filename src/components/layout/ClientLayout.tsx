@@ -39,6 +39,18 @@ export default function ClientLayout() {
     return <Login subtitle="Inicia sesión para ver este informe." />
   }
 
+  // Comprobar esto antes del acceso por rol: un admin tiene acceso implícito
+  // a todos los clientes, pero eso no significa que la URL corresponda a uno
+  // que exista — sin este chequeo, una URL inventada abriría el informe
+  // vacío en vez de avisar de que no existe.
+  if (clientInfo.notFound) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-base px-4">
+        <ErrorState message={`No existe ningún informe en "/${clientSlug}".`} />
+      </div>
+    )
+  }
+
   const access = session.user.role === 'admin' ? null : session.user.clients.find((c) => c.slug === clientSlug)
   const hasAccess = session.user.role === 'admin' || !!access
   if (!hasAccess) {
