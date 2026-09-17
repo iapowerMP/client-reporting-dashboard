@@ -24,6 +24,13 @@
  *         grupo). newGroupName: crea un grupo nuevo (o reutiliza uno con el
  *         mismo nombre, sin distinguir mayúsculas) y une el cliente a él —
  *         tiene prioridad sobre groupId si se envían ambos.
+ * POST ?action=upload-logo { client, filename, dataUrl }
+ *         -> sube el archivo (dataUrl = "data:<mime>;base64,<...>") al bucket
+ *         público "logos" de Supabase Storage, guarda su URL en
+ *         clients.logo_url y la devuelve como { logoUrl }. Mismos permisos
+ *         que PATCH (admin/project_manager con acceso a ese cliente). Vive
+ *         aquí (en vez de un fichero propio api/upload-logo.ts) por el
+ *         límite de Serverless Functions del plan de Vercel.
  */
 import { timingSafeEqual, createHmac } from 'crypto'
 
@@ -196,6 +203,11 @@ async function handleRequest(req: any, res: any) {
     } catch {
       res.status(502).json({ error: 'No se pudo leer clients desde Supabase.' })
     }
+    return
+  }
+
+  if (req.method === 'POST' && req.query?.action === 'upload-logo') {
+    await handleUploadLogo(req, res, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     return
   }
 
@@ -428,4 +440,73 @@ async function handleRequest(req: any, res: any) {
   }
 
   res.status(405).json({ error: 'Método no permitido.' })
+}
+
+/** POST ?action=upload-logo { client, filename, dataUrl } — ver doc-comment de cabecera. */
+async function handleUploadLogo(req: any, res: any, supabaseUrl: string, serviceRoleKey: string) {
+  const { client: slug, filename, dataUrl } = req.body ?? {}
+  if (!slug || !filename || !dataUrl) {
+    res.status(400).json({ error: 'Faltan campos: client, filename y dataUrl son obligatorios.' })
+    return
+  }
+
+  const storageHeaders = { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` }
+
+  const clientResp = await fetch(`${supabaseUrl}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id`, {
+    headers: storageHeaders,
+  })
+  if (!clientResp.ok) {
+    res.status(502).json({ error: `Supabase respondió ${clientResp.status} al leer el cliente.` })
+    return
+  }
+  const [clientRow] = (await clientResp.json()) as Array<{ id: string }>
+  if (!clientRow) {
+    res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+    return
+  }
+
+  const user = await getRequestUser(req, supabaseUrl, serviceRoleKey)
+  if (!user || (user.role !== 'admin' && user.role !== 'project_manager')) {
+    res.status(401).json({ error: 'No autorizado.' })
+    return
+  }
+  if (!(await hasClientAccess(user, clientRow.id, supabaseUrl, serviceRoleKey))) {
+    res.status(401).json({ error: 'No tienes acceso a este informe.' })
+    return
+  }
+
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl)
+  if (!match) {
+    res.status(400).json({ error: 'El archivo no llegó en el formato esperado.' })
+    return
+  }
+  const [, contentType, base64] = match
+  const bytes = Buffer.from(base64, 'base64')
+
+  const ext = (filename.split('.').pop() || 'png').toLowerCase()
+  const path = `${slug}-${Date.now()}.${ext}`
+
+  const uploadResp = await fetch(`${supabaseUrl}/storage/v1/object/logos/${path}`, {
+    method: 'POST',
+    headers: { ...storageHeaders, 'Content-Type': contentType },
+    body: bytes,
+  })
+  if (!uploadResp.ok) {
+    res.status(502).json({ error: `Supabase Storage respondió ${uploadResp.status} al subir el logo.` })
+    return
+  }
+
+  const logoUrl = `${supabaseUrl}/storage/v1/object/public/logos/${path}`
+
+  const patchResp = await fetch(`${supabaseUrl}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}`, {
+    method: 'PATCH',
+    headers: { ...storageHeaders, 'Content-Type': 'application/json', Prefer: 'return=representation' },
+    body: JSON.stringify({ logo_url: logoUrl }),
+  })
+  if (!patchResp.ok) {
+    res.status(502).json({ error: `Supabase respondió ${patchResp.status} al guardar logo_url.` })
+    return
+  }
+
+  res.status(200).json({ logoUrl })
 }

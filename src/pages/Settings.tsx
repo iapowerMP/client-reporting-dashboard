@@ -852,7 +852,7 @@ export default function Settings() {
     setUploadingLogo(true)
     try {
       const dataUrl = await readFileAsDataUrl(file)
-      const resp = await fetch('/api/upload-logo', {
+      const resp = await fetch('/api/clients?action=upload-logo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ client: clientSlug, filename: file.name, dataUrl }),

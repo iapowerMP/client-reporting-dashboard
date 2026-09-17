@@ -26,7 +26,7 @@
  *   - action=support-create   (POST) Body: { clientId, type: 'ayuda'|'error',
  *     message, attachmentDataUrl? } — el formulario de ayuda/error de un
  *     informe. attachmentDataUrl = "data:<mime>;base64,<...>", igual que
- *     /api/upload-logo, subido al bucket 'incidencias'.
+ *     /api/clients?action=upload-logo, subido al bucket 'incidencias'.
  *   - action=support-list     (GET)  Query opcional: status=abierto|resuelto.
  *   - action=support-resolve  (POST) Body: { id, status: 'abierto'|'resuelto' }.
  */
