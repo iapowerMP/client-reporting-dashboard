@@ -29,10 +29,20 @@
  * API solo admite una combinación de dimensiones por llamada) → sus propios
  * Code + Postgres de upsert.
  *
+ * Monitorización (sync_logs): "Transformar paginas a SQL upsert" (el último
+ * paso antes del upsert final) añade al SQL un INSERT INTO sync_logs con
+ * status='Completado' y el número de filas de páginas sincronizadas. Los
+ * nodos que pueden fallar por cliente ("Refrescar token de Google", las dos
+ * consultas a Search Analytics y los dos upserts de Postgres) tienen
+ * onError: continueErrorOutput y su salida de error va a "Registrar error en
+ * sync_logs" (inserta una fila con status='Error' y el mensaje) → "Detener y
+ * marcar error" (Stop And Error, para que la ejecución de n8n se siga
+ * marcando como fallida, igual que antes).
+ *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con Search Console", "Buscar
  *     sitio y token", "Upsert queries en Supabase", "Upsert páginas en
- *     Supabase").
+ *     Supabase" y "Registrar error en sync_logs").
  *
  * En el nodo "Config OAuth Google" hay que rellenar client_id y
  * client_secret: el mismo cliente OAuth de Google Cloud usado por
@@ -188,6 +198,7 @@ const refreshToken = node({
         ],
       },
     },
+    onError: 'continueErrorOutput',
     position: [1340, 300],
   },
   output: [{ access_token: '', expires_in: 3599 }],
@@ -235,6 +246,7 @@ const fetchQueries = node({
         '{{ JSON.stringify({ startDate: $json.startDate, endDate: $json.endDate, dimensions: ["date", "query"], rowLimit: 25000 }) }}',
       ),
     },
+    onError: 'continueErrorOutput',
     position: [1780, 200],
   },
   output: [{ rows: [] }],
@@ -293,6 +305,7 @@ const upsertQueries = node({
       query: expr("{{ $json.query || \"SELECT 1;\" }}"),
     },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [2220, 200],
   },
   output: [{}],
@@ -318,6 +331,7 @@ const fetchPages = node({
         '{{ JSON.stringify({ startDate: $("Calcular rango de fechas").item.json.startDate, endDate: $("Calcular rango de fechas").item.json.endDate, dimensions: ["date", "page"], rowLimit: 25000 }) }}',
       ),
     },
+    onError: 'continueErrorOutput',
     position: [2440, 300],
   },
   output: [{ rows: [] }],
@@ -348,8 +362,9 @@ const rows = results.map((r) => ({
   position: num(r.position),
 }));
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'gsc';";
+const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, records) VALUES (" + esc(clientId) + "::uuid, 'gsc', 'Completado', " + rows.length + ");";
 if (rows.length === 0) {
-  return { json: { query: touchDataSource, rowCount: 0 } };
+  return { json: { query: touchDataSource + ' ' + syncLogInsert, rowCount: 0 } };
 }
 const values = rows.map((x) =>
   '(' + esc(x.client_id) + '::uuid, ' + esc(x.site_url) + ', ' + esc(x.date) + '::date, ' + esc(x.page) + ', ' +
@@ -359,7 +374,7 @@ const upsertQuery =
   'INSERT INTO gsc_page_daily (client_id, site_url, date, page, clicks, impressions, ctr, position) VALUES ' +
   values +
   ' ON CONFLICT (client_id, date, page) DO UPDATE SET site_url = EXCLUDED.site_url, clicks = EXCLUDED.clicks, impressions = EXCLUDED.impressions, ctr = EXCLUDED.ctr, position = EXCLUDED.position, updated_at = now();';
-return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: rows.length } };`,
+return { json: { query: upsertQuery + ' ' + touchDataSource + ' ' + syncLogInsert, rowCount: rows.length } };`,
     },
     position: [2660, 300],
   },
@@ -373,7 +388,40 @@ const upsertPages = node({
     name: 'Upsert paginas en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [2880, 300],
+  },
+  output: [{}],
+})
+
+const logSyncError = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Registrar error en sync_logs',
+    parameters: {
+      resource: 'database',
+      operation: 'executeQuery',
+      query: expr(
+        "INSERT INTO sync_logs (client_id, platform, status, records, error_message) VALUES ('{{ $(\"Cliente GSC\").item.json.client_id }}'::uuid, 'gsc', 'Error', 0, '{{ ($json.error?.message ?? \"Error desconocido\").replace(/'/g, \"''\") }}');",
+      ),
+    },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [2440, 560],
+  },
+  output: [{}],
+})
+
+const stopOnError = node({
+  type: 'n8n-nodes-base.stopAndError',
+  version: 1,
+  config: {
+    name: 'Detener y marcar error',
+    parameters: {
+      errorType: 'errorMessage',
+      errorMessage: expr('{{ $json.error?.message ?? "Error desconocido en la sincronizacion de Search Console" }}'),
+    },
+    position: [2660, 560],
   },
   output: [{}],
 })
@@ -384,14 +432,16 @@ export default workflow('gsc-ingest', 'CRD - Search Console to Supabase (ingesta
   .to(mergePoint)
   .to(lookupAccount)
   .to(oauthConfig)
-  .to(refreshToken)
+  .to(refreshToken.onError(logSyncError))
   .to(dateRange)
-  .to(fetchQueries)
+  .to(fetchQueries.onError(logSyncError))
   .to(transformQueries)
-  .to(upsertQueries)
-  .to(fetchPages)
+  .to(upsertQueries.onError(logSyncError))
+  .to(fetchPages.onError(logSyncError))
   .to(transformPages)
-  .to(upsertPages)
+  .to(upsertPages.onError(logSyncError))
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
   .to(mergePoint)
+  .add(logSyncError)
+  .to(stopOnError)

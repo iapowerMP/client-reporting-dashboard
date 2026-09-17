@@ -30,9 +30,18 @@
  * 30 días) → Code (transforma la respuesta a un UPSERT SQL + un UPDATE de
  * data_sources.last_sync) → Postgres (ejecuta ambas sentencias).
  *
+ * Monitorización (sync_logs): "Transformar a SQL upsert" añade, al final del
+ * mismo string SQL, un INSERT INTO sync_logs con status='Completado' y el
+ * número de filas sincronizadas. Los nodos que pueden fallar por cliente
+ * ("Refrescar token de Google", "Consultar GA4 Data API" y "Upsert en
+ * Supabase") tienen onError: continueErrorOutput y su salida de error va a
+ * "Registrar error en sync_logs" (inserta una fila con status='Error' y el
+ * mensaje de error) → "Detener y marcar error" (Stop And Error, para que la
+ * ejecución de n8n se siga marcando como fallida, igual que antes).
+ *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con GA4", "Buscar propiedad y
- *     token" y "Upsert en Supabase").
+ *     token", "Upsert en Supabase" y "Registrar error en sync_logs").
  *
  * En el nodo "Config OAuth Google" hay que rellenar client_id y
  * client_secret: el mismo cliente OAuth de Google Cloud usado por
@@ -209,6 +218,7 @@ const refreshToken = node({
         ],
       },
     },
+    onError: 'continueErrorOutput',
     position: [1340, 300],
   },
   output: [{ access_token: '', expires_in: 3599 }],
@@ -234,6 +244,7 @@ const fetchGa4 = node({
         '{{ JSON.stringify({ dateRanges: [{ startDate: $("Elegir ventana de fechas").item.json.startDate, endDate: "today" }], dimensions: [{ name: "date" }, { name: "sessionDefaultChannelGroup" }], metrics: [{ name: "sessions" }, { name: "activeUsers" }, { name: "newUsers" }, { name: "engagedSessions" }, { name: "conversions" }], limit: 10000 }) }}',
       ),
     },
+    onError: 'continueErrorOutput',
     position: [1560, 300],
   },
   output: [{ rows: [] }],
@@ -270,8 +281,9 @@ const rows = results.map((r) => {
   };
 });
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'ga4';";
+const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, records) VALUES (" + esc(clientId) + "::uuid, 'ga4', 'Completado', " + rows.length + ");";
 if (rows.length === 0) {
-  return { json: { query: touchDataSource, rowCount: 0 } };
+  return { json: { query: touchDataSource + ' ' + syncLogInsert, rowCount: 0 } };
 }
 const values = rows.map((x) =>
   '(' + esc(x.client_id) + '::uuid, ' + esc(x.property_id) + ', ' + esc(x.date) + '::date, ' + esc(x.channel) + ', ' +
@@ -281,7 +293,7 @@ const upsertQuery =
   'INSERT INTO ga4_daily (client_id, property_id, date, channel, sessions, users, new_users, engaged_sessions, conversions) VALUES ' +
   values +
   ' ON CONFLICT (client_id, date, channel) DO UPDATE SET property_id = EXCLUDED.property_id, sessions = EXCLUDED.sessions, users = EXCLUDED.users, new_users = EXCLUDED.new_users, engaged_sessions = EXCLUDED.engaged_sessions, conversions = EXCLUDED.conversions, updated_at = now();';
-return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: rows.length } };`,
+return { json: { query: upsertQuery + ' ' + touchDataSource + ' ' + syncLogInsert, rowCount: rows.length } };`,
     },
     position: [1780, 300],
   },
@@ -295,7 +307,40 @@ const upsert = node({
     name: 'Upsert en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [2000, 300],
+  },
+  output: [{}],
+})
+
+const logSyncError = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Registrar error en sync_logs',
+    parameters: {
+      resource: 'database',
+      operation: 'executeQuery',
+      query: expr(
+        "INSERT INTO sync_logs (client_id, platform, status, records, error_message) VALUES ('{{ $(\"Cliente GA4\").item.json.client_id }}'::uuid, 'ga4', 'Error', 0, '{{ ($json.error?.message ?? \"Error desconocido\").replace(/'/g, \"''\") }}');",
+      ),
+    },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [1780, 560],
+  },
+  output: [{}],
+})
+
+const stopOnError = node({
+  type: 'n8n-nodes-base.stopAndError',
+  version: 1,
+  config: {
+    name: 'Detener y marcar error',
+    parameters: {
+      errorType: 'errorMessage',
+      errorMessage: expr('{{ $json.error?.message ?? "Error desconocido en la sincronizacion de GA4" }}'),
+    },
+    position: [2000, 560],
   },
   output: [{}],
 })
@@ -307,10 +352,12 @@ export default workflow('ga4-ingest', 'CRD - GA4 to Supabase (ingesta diaria, mu
   .to(lookupAccount)
   .to(chooseDateWindow)
   .to(oauthConfig)
-  .to(refreshToken)
-  .to(fetchGa4)
+  .to(refreshToken.onError(logSyncError))
+  .to(fetchGa4.onError(logSyncError))
   .to(transform)
-  .to(upsert)
+  .to(upsert.onError(logSyncError))
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
   .to(mergePoint)
+  .add(logSyncError)
+  .to(stopOnError)

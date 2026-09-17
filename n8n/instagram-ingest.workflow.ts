@@ -26,9 +26,18 @@
  * Instagram" (HTTP: impressions/reach por día) → "Transformar a SQL upsert"
  * → Postgres.
  *
+ * Monitorización (sync_logs): "Transformar a SQL upsert" añade, al final del
+ * mismo string SQL, un INSERT INTO sync_logs con status='Completado' y el
+ * número de filas sincronizadas. "Seguidores de Instagram", "Insights de
+ * Instagram" y "Upsert en Supabase" (los nodos que pueden fallar por
+ * cliente) tienen onError: continueErrorOutput y su salida de error va a
+ * "Registrar error en sync_logs" (inserta una fila con status='Error' y el
+ * mensaje) → "Detener y marcar error" (Stop And Error, para que la ejecución
+ * de n8n se siga marcando como fallida, igual que antes).
+ *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con Instagram", "Buscar cuenta y
- *     token", "Upsert en Supabase").
+ *     token", "Upsert en Supabase" y "Registrar error en sync_logs").
  *
  * El path del webhook debe ser un token largo y aleatorio (actúa como
  * secreto): la URL completa se guarda solo en la variable de entorno de
@@ -184,6 +193,7 @@ const fetchFollowers = node({
         ],
       },
     },
+    onError: 'continueErrorOutput',
     position: [1340, 300],
   },
   output: [{ followers_count: 0 }],
@@ -209,6 +219,7 @@ const fetchInsights = node({
         ],
       },
     },
+    onError: 'continueErrorOutput',
     position: [1560, 300],
   },
   output: [{ data: [] }],
@@ -241,8 +252,9 @@ for (const m of metrics) {
   }
 }
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'instagram';";
+const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, records) VALUES (" + esc(clientId) + "::uuid, 'instagram', 'Completado', " + byDate.size + ");";
 if (byDate.size === 0) {
-  return { json: { query: touchDataSource, rowCount: 0 } };
+  return { json: { query: touchDataSource + ' ' + syncLogInsert, rowCount: 0 } };
 }
 const values = Array.from(byDate.entries()).map(([date, v]) =>
   '(' + esc(clientId) + '::uuid, ' + esc(igUserId) + ', ' + esc(date) + '::date, ' + followers + ', ' + v.impressions + ', ' + v.reach + ')'
@@ -251,7 +263,7 @@ const upsertQuery =
   'INSERT INTO instagram_daily (client_id, ig_user_id, date, followers, impressions, reach) VALUES ' +
   values +
   ' ON CONFLICT (client_id, date) DO UPDATE SET ig_user_id = EXCLUDED.ig_user_id, followers = EXCLUDED.followers, impressions = EXCLUDED.impressions, reach = EXCLUDED.reach, updated_at = now();';
-return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: byDate.size } };`,
+return { json: { query: upsertQuery + ' ' + touchDataSource + ' ' + syncLogInsert, rowCount: byDate.size } };`,
     },
     position: [1780, 300],
   },
@@ -265,7 +277,40 @@ const upsert = node({
     name: 'Upsert en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [2000, 300],
+  },
+  output: [{}],
+})
+
+const logSyncError = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Registrar error en sync_logs',
+    parameters: {
+      resource: 'database',
+      operation: 'executeQuery',
+      query: expr(
+        "INSERT INTO sync_logs (client_id, platform, status, records, error_message) VALUES ('{{ $(\"Cliente Instagram\").item.json.client_id }}'::uuid, 'instagram', 'Error', 0, '{{ ($json.error?.message ?? \"Error desconocido\").replace(/'/g, \"''\") }}');",
+      ),
+    },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [1780, 560],
+  },
+  output: [{}],
+})
+
+const stopOnError = node({
+  type: 'n8n-nodes-base.stopAndError',
+  version: 1,
+  config: {
+    name: 'Detener y marcar error',
+    parameters: {
+      errorType: 'errorMessage',
+      errorMessage: expr('{{ $json.error?.message ?? "Error desconocido en la sincronizacion de Instagram" }}'),
+    },
+    position: [2000, 560],
   },
   output: [{}],
 })
@@ -276,10 +321,12 @@ export default workflow('instagram-ingest', 'CRD - Instagram to Supabase (ingest
   .to(mergePoint)
   .to(lookupAccount)
   .to(dateRange)
-  .to(fetchFollowers)
-  .to(fetchInsights)
+  .to(fetchFollowers.onError(logSyncError))
+  .to(fetchInsights.onError(logSyncError))
   .to(transform)
-  .to(upsert)
+  .to(upsert.onError(logSyncError))
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
   .to(mergePoint)
+  .add(logSyncError)
+  .to(stopOnError)

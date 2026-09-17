@@ -37,9 +37,19 @@
  * ejecución a partir de `data_sources` (endpoints /api/data-sources y
  * /api/oauth-meta-*).
  *
+ * Monitorización (sync_logs): "Transformar a SQL upsert" añade, al final del
+ * mismo string SQL, un INSERT INTO sync_logs con status='Completado' y el
+ * número de filas sincronizadas (para ambas ramas, ya que comparten el mismo
+ * Code). "Meta Ads insights (API)", "Meta Ads insights (login)" y "Upsert en
+ * Supabase" (los nodos que pueden fallar por cliente) tienen onError:
+ * continueErrorOutput y su salida de error va a "Registrar error en
+ * sync_logs" (inserta una fila con status='Error' y el mensaje) → "Detener y
+ * marcar error" (Stop And Error, para que la ejecución de n8n se siga
+ * marcando como fallida, igual que antes).
+ *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con Meta Ads", "Buscar cuenta y
- *     credencial" y "Upsert en Supabase").
+ *     credencial", "Upsert en Supabase" y "Registrar error en sync_logs").
  *   - "Meta Ads Token": credencial de tipo Header Auth (Name: Authorization,
  *     Value: "Bearer <token de larga duración del System User>", permiso
  *     ads_read). Solo se usa para clientes con auth_method = 'api'. El token
@@ -96,7 +106,10 @@
  *     ads_management/ads_read no concedido) tira toda la ejecución en lote
  *     abajo y ningún cliente posterior en esa misma corrida se sincroniza —
  *     así se detectó que la sincro diaria llevaba semanas sin avanzar más
- *     allá de la primera cuenta rota que encontraba (ver "aglaia").
+ *     allá de la primera cuenta rota que encontraba (ver "aglaia"). Con
+ *     neverError=true esas respuestas de error de Meta llegan como HTTP 200
+ *     de n8n (no disparan el onError de sync_logs); solo fallos de red/
+ *     autenticación a nivel de nodo lo hacen.
  *
  * Nota: Graph API en v25.0 (vigente a jul-2026). Meta da soporte a cada
  * versión ~24 meses desde su publicación — revisar antes de oct-2026.
@@ -273,6 +286,7 @@ const fetchMetaApi = node({
       options: { response: { response: { neverError: true } } },
     },
     credentials: { httpHeaderAuth: newCredential('Meta Ads Token') },
+    onError: 'continueErrorOutput',
     position: [1360, 420],
   },
   output: [{ data: [] }],
@@ -304,6 +318,7 @@ const fetchMetaOauth = node({
       },
       options: { response: { response: { neverError: true } } },
     },
+    onError: 'continueErrorOutput',
     position: [1360, 200],
   },
   output: [{ data: [] }],
@@ -349,8 +364,9 @@ const rows = results.map((r) => ({
   conversions_value: sumActions(conversionOverride ? r.conversion_values : r.action_values),
 }));
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'meta-ads';";
+const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, records) VALUES (" + esc(clientId) + "::uuid, 'meta-ads', 'Completado', " + rows.length + ");";
 if (rows.length === 0) {
-  return { json: { query: touchDataSource, rowCount: 0 } };
+  return { json: { query: touchDataSource + ' ' + syncLogInsert, rowCount: 0 } };
 }
 const values = rows.map((x) =>
   '(' + esc(x.client_id) + '::uuid, ' + esc(x.date) + '::date, ' + esc(x.campaign_id) + ', ' +
@@ -361,7 +377,7 @@ const upsertQuery =
   'INSERT INTO meta_campaign_daily (client_id, date, campaign_id, campaign_name, status, cost, impressions, clicks, conversions, conversions_value, ad_account_id) VALUES ' +
   values +
   ' ON CONFLICT (client_id, date, campaign_id) DO UPDATE SET campaign_name = EXCLUDED.campaign_name, status = EXCLUDED.status, cost = EXCLUDED.cost, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, ad_account_id = EXCLUDED.ad_account_id, updated_at = now();';
-return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: rows.length } };`,
+return { json: { query: upsertQuery + ' ' + touchDataSource + ' ' + syncLogInsert, rowCount: rows.length } };`,
     },
     position: [1600, 300],
   },
@@ -375,7 +391,40 @@ const upsert = node({
     name: 'Upsert en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [1820, 300],
+  },
+  output: [{}],
+})
+
+const logSyncError = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Registrar error en sync_logs',
+    parameters: {
+      resource: 'database',
+      operation: 'executeQuery',
+      query: expr(
+        "INSERT INTO sync_logs (client_id, platform, status, records, error_message) VALUES ('{{ $(\"Cliente Meta\").item.json.client_id }}'::uuid, 'meta-ads', 'Error', 0, '{{ ($json.error?.message ?? \"Error desconocido\").replace(/'/g, \"''\") }}');",
+      ),
+    },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [1600, 580],
+  },
+  output: [{}],
+})
+
+const stopOnError = node({
+  type: 'n8n-nodes-base.stopAndError',
+  version: 1,
+  config: {
+    name: 'Detener y marcar error',
+    parameters: {
+      errorType: 'errorMessage',
+      errorMessage: expr('{{ $json.error?.message ?? "Error desconocido en la sincronizacion de Meta Ads" }}'),
+    },
+    position: [1820, 580],
   },
   output: [{}],
 })
@@ -388,9 +437,11 @@ export default workflow('meta-ads-ingest', 'CRD - Meta Ads to Supabase (ingesta 
   .to(chooseDateWindow)
   .to(
     checkAuthMethod
-      .onTrue(fetchMetaOauth.to(transform.to(upsert)))
-      .onFalse(fetchMetaApi.to(transform)),
+      .onTrue(fetchMetaOauth.onError(logSyncError).to(transform.to(upsert.onError(logSyncError))))
+      .onFalse(fetchMetaApi.onError(logSyncError).to(transform)),
   )
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
   .to(mergePoint)
+  .add(logSyncError)
+  .to(stopOnError)

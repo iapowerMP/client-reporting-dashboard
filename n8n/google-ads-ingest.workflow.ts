@@ -46,10 +46,19 @@
  * escribe en la tabla `data_sources`. En la siguiente ejecución programada, el
  * workflow lo recoge solo (o al momento, si pulsa "Sincronizar").
  *
+ * Monitorización (sync_logs): "Transformar a SQL upsert" añade, al final del
+ * mismo string SQL, un INSERT INTO sync_logs con status='Completado' y el
+ * número de filas sincronizadas. "Google Ads search" y "Upsert en Supabase"
+ * (los nodos que pueden fallar por cliente) tienen onError:
+ * continueErrorOutput y su salida de error va a "Registrar error en
+ * sync_logs" (inserta una fila con status='Error' y el mensaje) → "Detener y
+ * marcar error" (Stop And Error, para que la ejecución de n8n se siga
+ * marcando como fallida, igual que antes).
+ *
  * Credenciales a configurar en n8n (compartidas para todos los clientes):
  *   - Google Ads OAuth2 (nodo "Google Ads search"), vía una cuenta MCC.
  *   - Postgres → Supabase (nodos "Clientes con Google Ads", "Buscar last_sync
- *     (manual)" y "Upsert en Supabase").
+ *     (manual)", "Upsert en Supabase" y "Registrar error en sync_logs").
  *
  * En el nodo "Config compartida" hay que rellenar: loginCustomerId (MCC id sin
  * guiones), developerToken y apiVersion.
@@ -252,6 +261,7 @@ const fetchGads = node({
       jsonBody: expr('{{ JSON.stringify({ query: $json.gaqlQuery }) }}'),
     },
     credentials: { googleAdsOAuth2Api: newCredential('Google Ads') },
+    onError: 'continueErrorOutput',
     position: [1340, 300],
   },
   output: [{ results: [] }],
@@ -290,8 +300,9 @@ const rows = results.map((r) => {
   };
 });
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'google-ads';";
+const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, records) VALUES (" + esc(clientId) + "::uuid, 'google-ads', 'Completado', " + rows.length + ");";
 if (rows.length === 0) {
-  return { json: { query: touchDataSource, rowCount: 0 } };
+  return { json: { query: touchDataSource + ' ' + syncLogInsert, rowCount: 0 } };
 }
 const values = rows.map((x) =>
   '(' + esc(x.client_id) + '::uuid, ' + esc(x.date) + '::date, ' + esc(x.campaign_id) + ', ' +
@@ -302,7 +313,7 @@ const upsertQuery =
   'INSERT INTO gads_campaign_daily (client_id, date, campaign_id, campaign_name, status, cost, impressions, clicks, conversions, conversions_value, customer_id) VALUES ' +
   values +
   ' ON CONFLICT (client_id, date, campaign_id) DO UPDATE SET campaign_name = EXCLUDED.campaign_name, status = EXCLUDED.status, cost = EXCLUDED.cost, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, customer_id = EXCLUDED.customer_id, updated_at = now();';
-return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: rows.length } };`,
+return { json: { query: upsertQuery + ' ' + touchDataSource + ' ' + syncLogInsert, rowCount: rows.length } };`,
     },
     position: [1560, 300],
   },
@@ -316,7 +327,40 @@ const upsert = node({
     name: 'Upsert en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [1780, 300],
+  },
+  output: [{}],
+})
+
+const logSyncError = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Registrar error en sync_logs',
+    parameters: {
+      resource: 'database',
+      operation: 'executeQuery',
+      query: expr(
+        "INSERT INTO sync_logs (client_id, platform, status, records, error_message) VALUES ('{{ $(\"Config compartida\").item.json.client_id }}'::uuid, 'google-ads', 'Error', 0, '{{ ($json.error?.message ?? \"Error desconocido\").replace(/'/g, \"''\") }}');",
+      ),
+    },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [1560, 560],
+  },
+  output: [{}],
+})
+
+const stopOnError = node({
+  type: 'n8n-nodes-base.stopAndError',
+  version: 1,
+  config: {
+    name: 'Detener y marcar error',
+    parameters: {
+      errorType: 'errorMessage',
+      errorMessage: expr('{{ $json.error?.message ?? "Error desconocido en la sincronizacion de Google Ads" }}'),
+    },
+    position: [1780, 560],
   },
   output: [{}],
 })
@@ -326,10 +370,12 @@ export default workflow('gads-ingest', 'CRD - Google Ads to Supabase (ingesta di
   .to(getClients)
   .to(sharedConfig)
   .to(buildGaqlQuery)
-  .to(fetchGads)
+  .to(fetchGads.onError(logSyncError))
   .to(transform)
-  .to(upsert)
+  .to(upsert.onError(logSyncError))
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
   .to(lookupLastSyncForWebhook)
   .to(sharedConfig)
+  .add(logSyncError)
+  .to(stopOnError)

@@ -49,9 +49,25 @@
  *      ese dato exige la feature "Page Public Content Access" de Meta
  *      (revisión de app aparte, pendiente).
  *
+ * Monitorización (sync_logs): "Transformar a SQL upsert" (rama A, Insights)
+ * añade, al final del mismo string SQL, un INSERT INTO sync_logs con
+ * status='Completado' — un único marcador de éxito por cliente y día para
+ * este workflow (las ramas B1/B2 no generan su propia fila de sync_logs,
+ * para no complicar el V1). Los 3 nodos HTTP ("Insights de la pagina",
+ * "Publicaciones de la pagina", "Clics por publicacion") y los 3 Postgres de
+ * escritura ("Upsert en Supabase", "Upsert publicaciones en Supabase",
+ * "Actualizar clics en Supabase") tienen onError: continueErrorOutput y su
+ * salida de error va a "Registrar error en sync_logs" (inserta una fila con
+ * status='Error' y el mensaje) → "Detener y marcar error" (Stop And Error,
+ * para que la ejecución de n8n se siga marcando como fallida, igual que
+ * antes). Nota: con neverError=true en los 3 HTTP, un error de la API de
+ * Meta llega como HTTP 200 de n8n y NO dispara este onError — solo fallos de
+ * red/autenticación a nivel de nodo lo hacen.
+ *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con Facebook", "Buscar pagina y
- *     token", "Upsert en Supabase").
+ *     token", "Upsert en Supabase", "Upsert publicaciones en Supabase",
+ *     "Actualizar clics en Supabase" y "Registrar error en sync_logs").
  *
  * El path del webhook debe ser un token largo y aleatorio (actúa como
  * secreto): la URL completa se guarda solo en la variable de entorno de
@@ -229,6 +245,7 @@ const fetchInsights = node({
       },
       options: { response: { response: { neverError: true } } },
     },
+    onError: 'continueErrorOutput',
     position: [1340, 300],
   },
   output: [{ data: [] }],
@@ -269,6 +286,7 @@ if (byDate.size === 0) {
   byDate.set(untilDate, { followers: 0, impressions: 0, engaged_users: 0, video_views: 0 });
 }
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'facebook';";
+const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, records) VALUES (" + esc(clientId) + "::uuid, 'facebook', 'Completado', " + byDate.size + ");";
 const values = Array.from(byDate.entries()).map(([date, v]) =>
   '(' + esc(clientId) + '::uuid, ' + esc(pageId) + ', ' + esc(date) + '::date, ' + v.followers + ', ' + v.impressions + ', ' + v.engaged_users + ', ' + v.video_views + ')'
 ).join(',');
@@ -276,7 +294,7 @@ const upsertQuery =
   'INSERT INTO facebook_page_daily (client_id, page_id, date, followers, impressions, engaged_users, video_views) VALUES ' +
   values +
   ' ON CONFLICT (client_id, date) DO UPDATE SET page_id = EXCLUDED.page_id, followers = EXCLUDED.followers, impressions = EXCLUDED.impressions, engaged_users = EXCLUDED.engaged_users, video_views = EXCLUDED.video_views, updated_at = now();';
-return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: byDate.size } };`,
+return { json: { query: upsertQuery + ' ' + touchDataSource + ' ' + syncLogInsert, rowCount: byDate.size } };`,
     },
     position: [1780, 300],
   },
@@ -290,6 +308,7 @@ const upsert = node({
     name: 'Upsert en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [2000, 300],
   },
   output: [{}],
@@ -316,6 +335,7 @@ const fetchPosts = node({
       },
       options: { response: { response: { neverError: true } } },
     },
+    onError: 'continueErrorOutput',
     position: [1340, 500],
   },
   output: [{ data: [] }],
@@ -366,6 +386,7 @@ const upsertPosts = node({
     name: 'Upsert publicaciones en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [2000, 500],
   },
   output: [{}],
@@ -411,6 +432,7 @@ const fetchClicksBatch = node({
       },
       options: { response: { response: { neverError: true } } },
     },
+    onError: 'continueErrorOutput',
     position: [1780, 700],
   },
   output: [{}],
@@ -462,7 +484,40 @@ const upsertClicks = node({
     name: 'Actualizar clics en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [2220, 700],
+  },
+  output: [{}],
+})
+
+const logSyncError = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Registrar error en sync_logs',
+    parameters: {
+      resource: 'database',
+      operation: 'executeQuery',
+      query: expr(
+        "INSERT INTO sync_logs (client_id, platform, status, records, error_message) VALUES ('{{ $(\"Cliente Facebook\").item.json.client_id }}'::uuid, 'facebook', 'Error', 0, '{{ ($json.error?.message ?? \"Error desconocido\").replace(/'/g, \"''\") }}');",
+      ),
+    },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [1780, 900],
+  },
+  output: [{}],
+})
+
+const stopOnError = node({
+  type: 'n8n-nodes-base.stopAndError',
+  version: 1,
+  config: {
+    name: 'Detener y marcar error',
+    parameters: {
+      errorType: 'errorMessage',
+      errorMessage: expr('{{ $json.error?.message ?? "Error desconocido en la sincronizacion de Facebook" }}'),
+    },
+    position: [2000, 900],
   },
   output: [{}],
 })
@@ -473,18 +528,20 @@ export default workflow('facebook-ingest', 'CRD - Facebook Page to Supabase (ing
   .to(mergePoint)
   .to(lookupAccount)
   .to(dateRange)
-  .to(fetchInsights)
+  .to(fetchInsights.onError(logSyncError))
   .to(transform)
-  .to(upsert)
+  .to(upsert.onError(logSyncError))
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
   .to(mergePoint)
   .add(dateRange)
-  .to(fetchPosts)
+  .to(fetchPosts.onError(logSyncError))
   .to(transformPosts)
-  .to(upsertPosts)
+  .to(upsertPosts.onError(logSyncError))
   .add(fetchPosts)
   .to(buildClicksBatch)
-  .to(fetchClicksBatch)
+  .to(fetchClicksBatch.onError(logSyncError))
   .to(transformClicksUpdate)
-  .to(upsertClicks)
+  .to(upsertClicks.onError(logSyncError))
+  .add(logSyncError)
+  .to(stopOnError)

@@ -31,6 +31,17 @@
  * referenciar sus propios nodos de fetch por nombre) pero ambas confluyen en
  * el mismo Postgres de upsert.
  *
+ * Monitorización (sync_logs): ambos Code de transformación ("...(API)" y
+ * "...(login)") añaden, al final del mismo string SQL, un INSERT INTO
+ * sync_logs con status='Completado' y el número de anuncios/día
+ * sincronizados. Los 4 nodos HTTP ("Insights de anuncios (API)/(login)",
+ * "Formato de anuncios (API)/(login)") y "Upsert en Supabase" (los nodos que
+ * pueden fallar por cliente) tienen onError: continueErrorOutput y su salida
+ * de error va a "Registrar error en sync_logs" (inserta una fila con
+ * status='Error' y el mensaje) → "Detener y marcar error" (Stop And Error,
+ * para que la ejecución de n8n se siga marcando como fallida, igual que
+ * antes).
+ *
  * Simplificación actual (V1):
  *   - `format` sale de mapear `creative.object_type` (VIDEO→video,
  *     PHOTO/SHARE/LINK→imagen, MULTI_SHARE→carrusel, resto→otro) — es una
@@ -47,7 +58,10 @@
  *     "(#1) An unknown error occurred". Los nodos "Insights de anuncios"
  *     tienen options.response.neverError = true para que ese fallo puntual
  *     no bloquee el resto de clientes del batch (esa cuenta se queda sin
- *     backfill de creatividades hasta revisarlo, pero no rompe nada más).
+ *     backfill de creatividades hasta revisarlo, pero no rompe nada más; con
+ *     neverError=true esa respuesta de error de Meta llega como HTTP 200 de
+ *     n8n y NO dispara el onError de sync_logs — solo fallos de red/
+ *     autenticación a nivel de nodo lo hacen).
  *   - Ventana de fechas: "Elegir ventana de fechas" decide date_preset
  *     "maximum" (todo el histórico) vs. "last_30d" mirando si meta_ad_daily
  *     ya tiene filas para el cliente — a propósito NO usa
@@ -59,7 +73,8 @@
  *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con Meta Ads (creatividades)",
- *     "Buscar cuenta y credencial (creatividades)", "Upsert en Supabase").
+ *     "Buscar cuenta y credencial (creatividades)", "Upsert en Supabase" y
+ *     "Registrar error en sync_logs").
  *   - "Meta Ads Token": la misma credencial de tipo Header Auth que ya
  *     configuraste para "CRD - Meta Ads to Supabase" — no hace falta crear
  *     una nueva. Solo se usa para clientes con auth_method = 'api'.
@@ -254,6 +269,7 @@ const fetchInsightsApi = node({
       options: { response: { response: { neverError: true } } },
     },
     credentials: { httpHeaderAuth: newCredential('Meta Ads Token') },
+    onError: 'continueErrorOutput',
     position: [1360, 420],
   },
   output: [{ data: [] }],
@@ -281,6 +297,7 @@ const fetchFormatApi = node({
       },
     },
     credentials: { httpHeaderAuth: newCredential('Meta Ads Token') },
+    onError: 'continueErrorOutput',
     position: [1580, 420],
   },
   output: [{ data: [] }],
@@ -312,6 +329,7 @@ const fetchInsightsOauth = node({
       },
       options: { response: { response: { neverError: true } } },
     },
+    onError: 'continueErrorOutput',
     position: [1360, 200],
   },
   output: [{ data: [] }],
@@ -341,6 +359,7 @@ const fetchFormatOauth = node({
         parameters: [{ name: 'Authorization', value: expr('{{ "Bearer " + $("Buscar cuenta y credencial (creatividades)").item.json.oauth_access_token }}') }],
       },
     },
+    onError: 'continueErrorOutput',
     position: [1580, 200],
   },
   output: [{ data: [] }],
@@ -400,8 +419,9 @@ for (const r of insights) {
   byAdDate.set(key, cur);
 }
 const touchDataSource = "UPDATE data_sources SET last_sync = now() WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'meta-ads';";
+const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, records) VALUES (" + esc(clientId) + "::uuid, 'meta-ads', 'Completado', " + byAdDate.size + ");";
 if (byAdDate.size === 0) {
-  return { json: { query: touchDataSource, rowCount: 0 } };
+  return { json: { query: touchDataSource + ' ' + syncLogInsert, rowCount: 0 } };
 }
 const values = Array.from(byAdDate.values()).map((x) => {
   const meta = formatByAdId.get(x.ad_id) || { format: 'otro', thumbnailUrl: null };
@@ -411,7 +431,7 @@ const upsertQuery =
   'INSERT INTO meta_ad_daily (client_id, ad_account_id, date, ad_id, ad_name, campaign_id, format, thumbnail_url, impressions, clicks, cost, conversions, conversions_value, frequency) VALUES ' +
   values +
   ' ON CONFLICT (client_id, date, ad_id) DO UPDATE SET ad_account_id = EXCLUDED.ad_account_id, ad_name = EXCLUDED.ad_name, campaign_id = EXCLUDED.campaign_id, format = EXCLUDED.format, thumbnail_url = EXCLUDED.thumbnail_url, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, cost = EXCLUDED.cost, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, frequency = EXCLUDED.frequency, updated_at = now();';
-return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: byAdDate.size } };`,
+return { json: { query: upsertQuery + ' ' + touchDataSource + ' ' + syncLogInsert, rowCount: byAdDate.size } };`,
     },
     position: [1800, 420],
   },
@@ -472,8 +492,9 @@ for (const r of insights) {
   byAdDate.set(key, cur);
 }
 const touchDataSource = "UPDATE data_sources SET last_sync = now() WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'meta-ads';";
+const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, records) VALUES (" + esc(clientId) + "::uuid, 'meta-ads', 'Completado', " + byAdDate.size + ");";
 if (byAdDate.size === 0) {
-  return { json: { query: touchDataSource, rowCount: 0 } };
+  return { json: { query: touchDataSource + ' ' + syncLogInsert, rowCount: 0 } };
 }
 const values = Array.from(byAdDate.values()).map((x) => {
   const meta = formatByAdId.get(x.ad_id) || { format: 'otro', thumbnailUrl: null };
@@ -483,7 +504,7 @@ const upsertQuery =
   'INSERT INTO meta_ad_daily (client_id, ad_account_id, date, ad_id, ad_name, campaign_id, format, thumbnail_url, impressions, clicks, cost, conversions, conversions_value, frequency) VALUES ' +
   values +
   ' ON CONFLICT (client_id, date, ad_id) DO UPDATE SET ad_account_id = EXCLUDED.ad_account_id, ad_name = EXCLUDED.ad_name, campaign_id = EXCLUDED.campaign_id, format = EXCLUDED.format, thumbnail_url = EXCLUDED.thumbnail_url, impressions = EXCLUDED.impressions, clicks = EXCLUDED.clicks, cost = EXCLUDED.cost, conversions = EXCLUDED.conversions, conversions_value = EXCLUDED.conversions_value, frequency = EXCLUDED.frequency, updated_at = now();';
-return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: byAdDate.size } };`,
+return { json: { query: upsertQuery + ' ' + touchDataSource + ' ' + syncLogInsert, rowCount: byAdDate.size } };`,
     },
     position: [1800, 200],
   },
@@ -497,7 +518,40 @@ const upsert = node({
     name: 'Upsert en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [2020, 300],
+  },
+  output: [{}],
+})
+
+const logSyncError = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Registrar error en sync_logs',
+    parameters: {
+      resource: 'database',
+      operation: 'executeQuery',
+      query: expr(
+        "INSERT INTO sync_logs (client_id, platform, status, records, error_message) VALUES ('{{ $(\"Cliente Meta Creatividades\").item.json.client_id }}'::uuid, 'meta-ads', 'Error', 0, '{{ ($json.error?.message ?? \"Error desconocido\").replace(/'/g, \"''\") }}');",
+      ),
+    },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [1800, 620],
+  },
+  output: [{}],
+})
+
+const stopOnError = node({
+  type: 'n8n-nodes-base.stopAndError',
+  version: 1,
+  config: {
+    name: 'Detener y marcar error',
+    parameters: {
+      errorType: 'errorMessage',
+      errorMessage: expr('{{ $json.error?.message ?? "Error desconocido en la sincronizacion de Meta Ads Creatividades" }}'),
+    },
+    position: [2020, 620],
   },
   output: [{}],
 })
@@ -510,9 +564,11 @@ export default workflow('meta-ads-creatives-ingest', 'CRD - Meta Ads Creatividad
   .to(chooseDateWindow)
   .to(
     checkAuthMethod
-      .onTrue(fetchInsightsOauth.to(fetchFormatOauth.to(transformOauth.to(upsert))))
-      .onFalse(fetchInsightsApi.to(fetchFormatApi.to(transformApi.to(upsert)))),
+      .onTrue(fetchInsightsOauth.onError(logSyncError).to(fetchFormatOauth.onError(logSyncError).to(transformOauth.to(upsert.onError(logSyncError)))))
+      .onFalse(fetchInsightsApi.onError(logSyncError).to(fetchFormatApi.onError(logSyncError).to(transformApi.to(upsert.onError(logSyncError))))),
   )
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
   .to(mergePoint)
+  .add(logSyncError)
+  .to(stopOnError)

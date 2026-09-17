@@ -24,9 +24,19 @@
  * "Estadisticas del canal" (HTTP: youtube/v3/channels, part=statistics) →
  * "Transformar a SQL upsert" → Postgres.
  *
+ * Monitorización (sync_logs): "Transformar a SQL upsert" añade, al final del
+ * mismo string SQL, un INSERT INTO sync_logs con status='Completado' y
+ * records=1 (este workflow siempre escribe una única fila/snapshot).
+ * "Refrescar token de Google", "Estadisticas del canal" y "Upsert en
+ * Supabase" (los nodos que pueden fallar por cliente) tienen onError:
+ * continueErrorOutput y su salida de error va a "Registrar error en
+ * sync_logs" (inserta una fila con status='Error' y el mensaje) → "Detener y
+ * marcar error" (Stop And Error, para que la ejecución de n8n se siga
+ * marcando como fallida, igual que antes).
+ *
  * Credenciales a configurar en n8n:
  *   - Postgres → Supabase (nodos "Clientes con YouTube", "Buscar canal y
- *     token", "Upsert en Supabase").
+ *     token", "Upsert en Supabase" y "Registrar error en sync_logs").
  *
  * En el nodo "Config OAuth Google" hay que rellenar client_id y
  * client_secret: el mismo cliente OAuth de Google Cloud usado por
@@ -184,6 +194,7 @@ const refreshToken = node({
         ],
       },
     },
+    onError: 'continueErrorOutput',
     position: [1340, 300],
   },
   output: [{ access_token: '', expires_in: 3599 }],
@@ -211,6 +222,7 @@ const fetchChannelStats = node({
         parameters: [{ name: 'Authorization', value: expr('{{ "Bearer " + $json.access_token }}') }],
       },
     },
+    onError: 'continueErrorOutput',
     position: [1560, 300],
   },
   output: [{ items: [] }],
@@ -235,11 +247,12 @@ const subscribers = num(stats.subscriberCount);
 const views = num(stats.viewCount);
 const videoCount = num(stats.videoCount);
 const touchDataSource = "UPDATE data_sources SET last_sync = now(), status = 'conectado' WHERE client_id = " + esc(clientId) + "::uuid AND platform = 'youtube';";
+const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, records) VALUES (" + esc(clientId) + "::uuid, 'youtube', 'Completado', 1);";
 const upsertQuery =
   'INSERT INTO youtube_daily (client_id, channel_id, date, subscribers, views, video_count) VALUES (' +
   esc(clientId) + '::uuid, ' + esc(channelId) + ', ' + esc(today) + '::date, ' + subscribers + ', ' + views + ', ' + videoCount +
   ') ON CONFLICT (client_id, date) DO UPDATE SET channel_id = EXCLUDED.channel_id, subscribers = EXCLUDED.subscribers, views = EXCLUDED.views, video_count = EXCLUDED.video_count, updated_at = now();';
-return { json: { query: upsertQuery + ' ' + touchDataSource, rowCount: 1 } };`,
+return { json: { query: upsertQuery + ' ' + touchDataSource + ' ' + syncLogInsert, rowCount: 1 } };`,
     },
     position: [1780, 300],
   },
@@ -253,7 +266,40 @@ const upsert = node({
     name: 'Upsert en Supabase',
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
+    onError: 'continueErrorOutput',
     position: [2000, 300],
+  },
+  output: [{}],
+})
+
+const logSyncError = node({
+  type: 'n8n-nodes-base.postgres',
+  version: 2.6,
+  config: {
+    name: 'Registrar error en sync_logs',
+    parameters: {
+      resource: 'database',
+      operation: 'executeQuery',
+      query: expr(
+        "INSERT INTO sync_logs (client_id, platform, status, records, error_message) VALUES ('{{ $(\"Cliente YouTube\").item.json.client_id }}'::uuid, 'youtube', 'Error', 0, '{{ ($json.error?.message ?? \"Error desconocido\").replace(/'/g, \"''\") }}');",
+      ),
+    },
+    credentials: { postgres: newCredential('Supabase Postgres') },
+    position: [1780, 560],
+  },
+  output: [{}],
+})
+
+const stopOnError = node({
+  type: 'n8n-nodes-base.stopAndError',
+  version: 1,
+  config: {
+    name: 'Detener y marcar error',
+    parameters: {
+      errorType: 'errorMessage',
+      errorMessage: expr('{{ $json.error?.message ?? "Error desconocido en la sincronizacion de YouTube" }}'),
+    },
+    position: [2000, 560],
   },
   output: [{}],
 })
@@ -264,10 +310,12 @@ export default workflow('youtube-ingest', 'CRD - YouTube to Supabase (ingesta di
   .to(mergePoint)
   .to(lookupAccount)
   .to(oauthConfig)
-  .to(refreshToken)
-  .to(fetchChannelStats)
+  .to(refreshToken.onError(logSyncError))
+  .to(fetchChannelStats.onError(logSyncError))
   .to(transform)
-  .to(upsert)
+  .to(upsert.onError(logSyncError))
   .add(manualSyncWebhook)
   .to(normalizeWebhookPayload)
   .to(mergePoint)
+  .add(logSyncError)
+  .to(stopOnError)
