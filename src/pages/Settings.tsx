@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { useNavigate, useOutletContext, useParams, useSearchParams } from 'react-router-dom'
-import { UploadCloud, Loader2, Facebook, Chrome } from 'lucide-react'
+import { UploadCloud, Loader2, Facebook, Chrome, Music2 } from 'lucide-react'
 import ChartCard from '@/components/shared/ChartCard'
 import StatusBadge from '@/components/shared/StatusBadge'
 import Toggle from '@/components/shared/Toggle'
@@ -16,18 +16,28 @@ const MAX_LOGO_BYTES = 2 * 1024 * 1024
  * n8n/Supabase). El resto del catálogo existe para poder guardar ya su ID de
  * cuenta, pero no sincroniza nada todavía — el estado debe decirlo con
  * claridad en vez de simular una conexión que no existe. */
-const BUILT_INTEGRATIONS = new Set(['google-ads', 'meta-ads', 'ga4', 'gsc', 'facebook', 'instagram', 'youtube'])
+const BUILT_INTEGRATIONS = new Set([
+  'google-ads',
+  'meta-ads',
+  'ga4',
+  'gsc',
+  'facebook',
+  'instagram',
+  'youtube',
+  'tiktok-ads',
+  'tiktok-org',
+])
 
 /** Plataformas que, además de la conexión manual por API, admiten "iniciar
  * sesión" (OAuth): el propio PM/cliente concede acceso a las cuentas que él
  * mismo administra, sin depender de que estén compartidas con nuestro
  * Business Manager. */
-const OAUTH_CAPABLE = new Set(['meta-ads', 'ga4', 'gsc', 'facebook', 'instagram', 'youtube'])
+const OAUTH_CAPABLE = new Set(['meta-ads', 'ga4', 'gsc', 'facebook', 'instagram', 'youtube', 'tiktok-ads', 'tiktok-org'])
 
 /** Plataformas que SOLO admiten inicio de sesión (sin campo manual de ID). */
-const OAUTH_ONLY = new Set(['ga4', 'gsc', 'facebook', 'instagram', 'youtube'])
+const OAUTH_ONLY = new Set(['ga4', 'gsc', 'facebook', 'instagram', 'youtube', 'tiktok-ads', 'tiktok-org'])
 
-type OauthPlatform = 'meta' | 'facebook' | 'instagram' | 'ga4' | 'gsc' | 'youtube'
+type OauthPlatform = 'meta' | 'facebook' | 'instagram' | 'ga4' | 'gsc' | 'youtube' | 'tiktok-ads' | 'tiktok-org'
 
 /** Un flujo de "iniciar sesión" por plataforma: sus endpoints y el nombre
  * del campo que espera el finalize. Las integraciones de Meta comparten
@@ -36,7 +46,14 @@ type OauthPlatform = 'meta' | 'facebook' | 'instagram' | 'ga4' | 'gsc' | 'youtub
  * límite de Serverless Functions del plan de Vercel. */
 const OAUTH_CONFIG: Record<
   OauthPlatform,
-  { startUrl: string; accountsUrl: string; finalizeUrl: string; finalizeField: string; finalizeExtra?: Record<string, string>; providerLabel: 'Facebook' | 'Google' }
+  {
+    startUrl: string
+    accountsUrl: string
+    finalizeUrl: string
+    finalizeField: string
+    finalizeExtra?: Record<string, string>
+    providerLabel: 'Facebook' | 'Google' | 'TikTok'
+  }
 > = {
   meta: {
     startUrl: '/api/oauth-facebook?service=ads&action=start',
@@ -86,6 +103,22 @@ const OAUTH_CONFIG: Record<
     finalizeExtra: { service: 'youtube' },
     providerLabel: 'Google',
   },
+  'tiktok-ads': {
+    startUrl: '/api/oauth-tiktok?service=ads&action=start',
+    accountsUrl: '/api/oauth-tiktok?service=ads&action=accounts',
+    finalizeUrl: '/api/oauth-tiktok?action=finalize',
+    finalizeField: 'accountId',
+    finalizeExtra: { service: 'ads' },
+    providerLabel: 'TikTok',
+  },
+  'tiktok-org': {
+    startUrl: '/api/oauth-tiktok?service=organic&action=start',
+    accountsUrl: '/api/oauth-tiktok?service=organic&action=accounts',
+    finalizeUrl: '/api/oauth-tiktok?action=finalize',
+    finalizeField: 'accountId',
+    finalizeExtra: { service: 'organic' },
+    providerLabel: 'TikTok',
+  },
 }
 
 /** A qué flujo de login corresponde cada conexión del catálogo. */
@@ -96,6 +129,8 @@ const OAUTH_PLATFORM_BY_CONNECTION: Record<string, OauthPlatform> = {
   ga4: 'ga4',
   gsc: 'gsc',
   youtube: 'youtube',
+  'tiktok-ads': 'tiktok-ads',
+  'tiktok-org': 'tiktok-org',
 }
 
 interface DataSourceRow {
@@ -118,7 +153,7 @@ interface RealConnection {
   oauthCapable: boolean
   oauthOnly: boolean
   authMethod: 'api' | 'oauth'
-  loginProvider: 'Facebook' | 'Google' | null
+  loginProvider: 'Facebook' | 'Google' | 'TikTok' | null
 }
 
 function formatLastSync(iso: string | null): string {
@@ -372,7 +407,9 @@ function Field({
 
 /* --------------------------- Card de conexión ---------------------------- */
 
-const LOGIN_ICON = { Facebook, Google: Chrome } as const
+// lucide-react no trae un logo de TikTok; Music2 se usa como icono genérico
+// razonable (igual que Chrome hace de sustituto de Google más arriba).
+const LOGIN_ICON = { Facebook, Google: Chrome, TikTok: Music2 } as const
 
 function ConnectionCard({
   conn,
@@ -627,14 +664,20 @@ export default function Settings() {
     gsc: 'gsc',
     youtube: 'youtube',
   }
+  const TIKTOK_SERVICE_TO_PLATFORM: Record<string, OauthPlatform> = {
+    ads: 'tiktok-ads',
+    organic: 'tiktok-org',
+  }
 
-  // Qué flujo de login está "recogiendo" al usuario tras volver de Facebook/Google:
-  // las integraciones de Meta comparten /api/oauth-facebook y redirigen con
-  // ?facebook_oauth=<service>; las de Google, /api/oauth-google con
-  // ?google_oauth=<service>.
+  // Qué flujo de login está "recogiendo" al usuario tras volver de
+  // Facebook/Google/TikTok: las integraciones de Meta comparten
+  // /api/oauth-facebook y redirigen con ?facebook_oauth=<service>; las de
+  // Google, /api/oauth-google con ?google_oauth=<service>; las de TikTok,
+  // /api/oauth-tiktok con ?tiktok_oauth=<service>.
   const activeOauthPlatform: OauthPlatform | null =
     FACEBOOK_SERVICE_TO_PLATFORM[searchParams.get('facebook_oauth') ?? ''] ??
     GOOGLE_SERVICE_TO_PLATFORM[searchParams.get('google_oauth') ?? ''] ??
+    TIKTOK_SERVICE_TO_PLATFORM[searchParams.get('tiktok_oauth') ?? ''] ??
     null
 
   const [oauthAccounts, setOauthAccounts] = useState<OauthAccount[] | null>(null)
@@ -674,6 +717,7 @@ export default function Settings() {
     const next = new URLSearchParams(searchParams)
     next.delete('facebook_oauth')
     next.delete('google_oauth')
+    next.delete('tiktok_oauth')
     setSearchParams(next, { replace: true })
     setOauthAccounts(null)
     setOauthAccountsError(null)
