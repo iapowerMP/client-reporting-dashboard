@@ -62,7 +62,7 @@ export function ReportConfigProvider({
     (map: VisibilityMap) => {
       fetch('/api/clients', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ client: clientSlug, reportVisibility: map }),
       }).catch(() => {
         /* si falla el guardado, el cambio queda solo en esta sesión */

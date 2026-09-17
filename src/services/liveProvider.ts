@@ -24,18 +24,18 @@ async function fetchJson<T>(
   const url = `${endpoint}?${params.toString()}`
   let res: Response
   try {
-    res = await fetch(url, { headers: { Accept: 'application/json', ...authHeaders(client) } })
+    res = await fetch(url, { headers: { Accept: 'application/json', ...authHeaders() } })
   } catch {
     throw new Error(
       `No se pudo conectar con ${endpoint}. ¿Está desplegada la función de servidor?`,
     )
   }
   if (res.status === 401) {
-    // El informe está protegido y el token guardado ya no es válido: se
-    // recarga para que ClientLayout vuelva a pedir la contraseña.
-    clearToken(client)
+    // La sesión ya no es válida (caducada o sin acceso a este informe): se
+    // recarga para que ClientLayout vuelva a pedir el login.
+    clearToken()
     window.location.reload()
-    throw new Error('Este informe está protegido con contraseña. Vuelve a introducirla.')
+    throw new Error('Tu sesión ha caducado. Vuelve a iniciar sesión.')
   }
   if (!res.ok) {
     let detail = ''

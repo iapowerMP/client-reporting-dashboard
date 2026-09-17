@@ -97,32 +97,56 @@ async function resolveClient(
   supabaseUrl: string,
   serviceRoleKey: string,
   slug: string,
-): Promise<{ id: string; access_password_hash: string | null } | null> {
-  const url = `${supabaseUrl}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,access_password_hash`
+): Promise<{ id: string } | null> {
+  const url = `${supabaseUrl}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id`
   const resp = await fetch(url, {
     headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
   })
   if (!resp.ok) return null
-  const rows = (await resp.json()) as Array<{ id: string; access_password_hash: string | null }>
+  const rows = (await resp.json()) as Array<{ id: string }>
   return rows[0] ?? null
 }
 
-function verifyToken(token: string, subject: string, secret: string): boolean {
-  const [expiryStr, sig] = token.split('.')
-  const expiry = Number(expiryStr)
-  if (!expiry || !sig || Date.now() > expiry) return false
-  const expected = createHmac('sha256', secret).update(`${subject}:${expiry}`).digest('hex')
-  const a = Buffer.from(sig, 'hex')
-  const b = Buffer.from(expected, 'hex')
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
+function verifyUserToken(token: string, secret: string): string | null {
+  try {
+    const [userId, expiryStr, sig] = Buffer.from(token, 'base64url').toString('utf8').split('.')
+    const expiry = Number(expiryStr)
+    if (!userId || !expiry || !sig || Date.now() > expiry) return null
+    const expected = createHmac('sha256', secret).update(`${userId}:${expiry}`).digest('hex')
+    const a = Buffer.from(sig, 'hex')
+    const b = Buffer.from(expected, 'hex')
+    if (a.length !== b.length) return null
+    return timingSafeEqual(a, b) ? userId : null
+  } catch {
+    return null
+  }
 }
 
-function checkAccess(req: any, client: { access_password_hash: string | null }, slug: string, secret: string): boolean {
-  if (!client.access_password_hash) return true
-  const authHeader = req.headers?.authorization ?? ''
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-  return !!token && verifyToken(token, slug, secret)
+/** Comprueba que `token` (bearer, o el ?token= de un GET de navegador que
+ * no puede mandar cabeceras) pertenece a un usuario con acceso a este
+ * cliente (admin: acceso implícito a todos). */
+async function checkAccess(
+  token: string,
+  clientId: string,
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  secret: string,
+): Promise<boolean> {
+  const userId = token ? verifyUserToken(token, secret) : null
+  if (!userId) return false
+  const headers = { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` }
+  const userResp = await fetch(`${supabaseUrl}/rest/v1/users?id=eq.${userId}&select=role`, { headers })
+  if (!userResp.ok) return false
+  const [user] = (await userResp.json()) as Array<{ role: string }>
+  if (!user) return false
+  if (user.role === 'admin') return true
+  const accessResp = await fetch(
+    `${supabaseUrl}/rest/v1/user_client_access?user_id=eq.${userId}&client_id=eq.${clientId}&select=id`,
+    { headers },
+  )
+  if (!accessResp.ok) return false
+  const rows = (await accessResp.json()) as Array<{ id: string }>
+  return rows.length > 0
 }
 
 function signState(slug: string, service: FacebookService, secret: string): string {
@@ -251,12 +275,10 @@ async function handleStart(req: any, res: any) {
     res.status(404).send(`No existe ningún cliente con el identificador "${slug}".`)
     return
   }
-  if (client.access_password_hash) {
-    const token = typeof req.query?.token === 'string' ? req.query.token : ''
-    if (!token || !verifyToken(token, slug, AUTH_TOKEN_SECRET)) {
-      res.status(401).send('Este informe está protegido con contraseña. Vuelve a introducirla.')
-      return
-    }
+  const startToken = typeof req.query?.token === 'string' ? req.query.token : ''
+  if (!(await checkAccess(startToken, client.id, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET))) {
+    res.status(401).send('No tienes acceso a este informe. Inicia sesión de nuevo.')
+    return
   }
 
   const state = signState(slug, service, AUTH_TOKEN_SECRET)
@@ -456,8 +478,10 @@ async function handleFinalize(req: any, res: any) {
     res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
     return
   }
-  if (!checkAccess(req, client, slug, AUTH_TOKEN_SECRET)) {
-    res.status(401).json({ error: 'Este informe está protegido con contraseña. Vuelve a introducirla.' })
+  const finalizeAuthHeader = req.headers?.authorization ?? ''
+  const finalizeToken = finalizeAuthHeader.startsWith('Bearer ') ? finalizeAuthHeader.slice(7) : ''
+  if (!(await checkAccess(finalizeToken, client.id, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET))) {
+    res.status(401).json({ error: 'No tienes acceso a este informe. Inicia sesión de nuevo.' })
     return
   }
 

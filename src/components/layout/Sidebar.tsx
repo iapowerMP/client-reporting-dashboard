@@ -57,6 +57,8 @@ interface SidebarProps {
   /** Sufijo de ruta actual (ej. '/paid'), para mantener la misma sección al
    * saltar a otra empresa del grupo. */
   currentSuffix?: string
+  /** Falso para el rol cliente: oculta el acceso a Configuración. */
+  showSettings?: boolean
   /** Estado del overlay en móvil. */
   open: boolean
   onClose: () => void
@@ -69,6 +71,7 @@ export default function Sidebar({
   reportTemplate = 'standard',
   group = null,
   currentSuffix = '',
+  showSettings = true,
   open,
   onClose,
 }: SidebarProps) {
@@ -195,25 +198,28 @@ export default function Sidebar({
           ))}
         </nav>
 
-        {/* Pie: acceso directo a la configuración del informe (solo icono) */}
-        <div className="border-t border-border p-4">
-          <NavLink
-            to={`${base}/settings`}
-            onClick={onClose}
-            aria-label="Configuración del informe"
-            title="Configuración del informe"
-            className={({ isActive }) =>
-              cn(
-                'flex h-9 w-9 items-center justify-center rounded-control transition-colors',
-                isActive
-                  ? 'bg-accent/10 text-white'
-                  : 'text-text-secondary hover:bg-white/5 hover:text-white',
-              )
-            }
-          >
-            <Settings className="h-[18px] w-[18px] shrink-0" />
-          </NavLink>
-        </div>
+        {/* Pie: acceso directo a la configuración del informe (solo icono) —
+            oculto para el rol cliente, que no puede tocar Configuración. */}
+        {showSettings && (
+          <div className="border-t border-border p-4">
+            <NavLink
+              to={`${base}/settings`}
+              onClick={onClose}
+              aria-label="Configuración del informe"
+              title="Configuración del informe"
+              className={({ isActive }) =>
+                cn(
+                  'flex h-9 w-9 items-center justify-center rounded-control transition-colors',
+                  isActive
+                    ? 'bg-accent/10 text-white'
+                    : 'text-text-secondary hover:bg-white/5 hover:text-white',
+                )
+              }
+            >
+              <Settings className="h-[18px] w-[18px] shrink-0" />
+            </NavLink>
+          </div>
+        )}
       </aside>
     </>
   )

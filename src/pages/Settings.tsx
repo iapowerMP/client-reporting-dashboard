@@ -526,7 +526,7 @@ export default function Settings() {
     setSourcesError(null)
     try {
       const resp = await fetch(`/api/data-sources?client=${encodeURIComponent(clientSlug)}`, {
-        headers: { Accept: 'application/json', ...authHeaders(clientSlug) },
+        headers: { Accept: 'application/json', ...authHeaders() },
       })
       if (!resp.ok) throw new Error(`El servidor respondió ${resp.status}`)
       const body = await resp.json()
@@ -554,7 +554,7 @@ export default function Settings() {
     try {
       const resp = await fetch('/api/data-sources', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ client: clientSlug, platform, externalId }),
       })
       if (!resp.ok) throw new Error()
@@ -574,7 +574,7 @@ export default function Settings() {
     try {
       const resp = await fetch('/api/sync-source', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ client: clientSlug, platform }),
       })
       const body = await resp.json().catch(() => ({}))
@@ -594,7 +594,7 @@ export default function Settings() {
   /* ------------------------ Conexión por inicio de sesión ------------------------ */
 
   const handleConnectOauth = (platform: OauthPlatform) => {
-    const token = getStoredToken(clientSlug)
+    const token = getStoredToken()
     const url = new URL(OAUTH_CONFIG[platform].startUrl, window.location.origin)
     url.searchParams.set('client', clientSlug)
     if (token) url.searchParams.set('token', token)
@@ -689,7 +689,7 @@ export default function Settings() {
     try {
       const resp = await fetch(cfg.finalizeUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           client: clientSlug,
           [cfg.finalizeField]: accountId,
@@ -772,7 +772,7 @@ export default function Settings() {
 
       const resp = await fetch('/api/clients', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify(payload),
       })
       if (!resp.ok) throw new Error()
@@ -810,7 +810,7 @@ export default function Settings() {
       const dataUrl = await readFileAsDataUrl(file)
       const resp = await fetch('/api/upload-logo', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ client: clientSlug, filename: file.name, dataUrl }),
       })
       if (!resp.ok) throw new Error()
@@ -820,47 +820,6 @@ export default function Settings() {
       showToast('No se pudo subir el logo. Revisa la configuración del servidor (Supabase).')
     } finally {
       setUploadingLogo(false)
-    }
-  }
-
-  const [passwordValue, setPasswordValue] = useState('')
-  const [savingPassword, setSavingPassword] = useState(false)
-
-  const handleSetPassword = async () => {
-    if (!passwordValue.trim()) return
-    setSavingPassword(true)
-    try {
-      const resp = await fetch('/api/clients', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
-        body: JSON.stringify({ client: clientSlug, password: passwordValue.trim() }),
-      })
-      if (!resp.ok) throw new Error()
-      setPasswordValue('')
-      await clientInfo.refetch()
-      showToast('Contraseña activada')
-    } catch {
-      showToast('No se pudo guardar la contraseña.')
-    } finally {
-      setSavingPassword(false)
-    }
-  }
-
-  const handleRemovePassword = async () => {
-    setSavingPassword(true)
-    try {
-      const resp = await fetch('/api/clients', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...authHeaders(clientSlug) },
-        body: JSON.stringify({ client: clientSlug, removePassword: true }),
-      })
-      if (!resp.ok) throw new Error()
-      await clientInfo.refetch()
-      showToast('Contraseña desactivada')
-    } catch {
-      showToast('No se pudo quitar la contraseña.')
-    } finally {
-      setSavingPassword(false)
     }
   }
 
@@ -1032,38 +991,15 @@ export default function Settings() {
 
       {/* Seguridad del informe */}
       <ChartCard title="Seguridad del informe">
-        <p className="mb-3 text-sm text-text-secondary">
-          {clientData?.hasPassword
-            ? 'Este informe está protegido con contraseña. Solo quien la conozca puede verlo.'
-            : 'Este informe es visible para cualquiera que tenga el enlace. Añade una contraseña para restringir el acceso.'}
+        <p className="text-sm text-text-secondary">
+          Este informe solo es visible para las personas con una cuenta que
+          tenga acceso a él. Gestiona quién puede entrar (Project Manager o
+          Cliente) desde{' '}
+          <a href="/admin/usuarios" className="text-accent hover:underline">
+            Admin → Usuarios
+          </a>
+          .
         </p>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input
-            type="password"
-            value={passwordValue}
-            onChange={(e) => setPasswordValue(e.target.value)}
-            placeholder={clientData?.hasPassword ? 'Nueva contraseña' : 'Establecer contraseña'}
-            className="w-full max-w-xs rounded-control border border-border bg-base px-3 py-2 text-sm text-white placeholder:text-text-secondary/60 focus:border-accent/60 focus:outline-none focus:ring-1 focus:ring-accent/40"
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={handleSetPassword}
-              disabled={savingPassword || !passwordValue.trim()}
-              className="rounded-control border border-border bg-base px-4 py-2 text-sm font-medium text-text-primary transition-colors hover:bg-white/5 disabled:opacity-60"
-            >
-              {clientData?.hasPassword ? 'Cambiar contraseña' : 'Activar contraseña'}
-            </button>
-            {clientData?.hasPassword && (
-              <button
-                onClick={handleRemovePassword}
-                disabled={savingPassword}
-                className="rounded-control border border-border bg-base px-4 py-2 text-sm font-medium text-negative transition-colors hover:bg-negative/10 disabled:opacity-60"
-              >
-                Quitar contraseña
-              </button>
-            )}
-          </div>
-        </div>
       </ChartCard>
 
       {/* Conexiones — no aplica a informes especiales (datos importados a

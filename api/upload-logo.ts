@@ -4,20 +4,25 @@
  * Sube el archivo al bucket público "logos" de Supabase Storage y guarda su
  * URL pública en clients.logo_url. Devuelve { logoUrl }.
  *
- * Si el cliente tiene contraseña activada, exige el token de sesión
- * (Authorization: Bearer <token>, emitido por /api/verify-access).
+ * Exige un usuario con acceso a ese cliente y rol admin o project_manager
+ * (Authorization: Bearer <token>, emitido por /api/auth?action=login) — es
+ * una acción de Configuración, no disponible para el rol cliente.
  */
 import { timingSafeEqual, createHmac } from 'crypto'
 
-function verifyToken(token: string, subject: string, secret: string): boolean {
-  const [expiryStr, sig] = token.split('.')
-  const expiry = Number(expiryStr)
-  if (!expiry || !sig || Date.now() > expiry) return false
-  const expected = createHmac('sha256', secret).update(`${subject}:${expiry}`).digest('hex')
-  const a = Buffer.from(sig, 'hex')
-  const b = Buffer.from(expected, 'hex')
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
+function verifyUserToken(token: string, secret: string): string | null {
+  try {
+    const [userId, expiryStr, sig] = Buffer.from(token, 'base64url').toString('utf8').split('.')
+    const expiry = Number(expiryStr)
+    if (!userId || !expiry || !sig || Date.now() > expiry) return null
+    const expected = createHmac('sha256', secret).update(`${userId}:${expiry}`).digest('hex')
+    const a = Buffer.from(sig, 'hex')
+    const b = Buffer.from(expected, 'hex')
+    if (a.length !== b.length) return null
+    return timingSafeEqual(a, b) ? userId : null
+  } catch {
+    return null
+  }
 }
 
 export default async function handler(req: any, res: any) {
@@ -48,25 +53,44 @@ async function handleRequest(req: any, res: any) {
     return
   }
 
+  const storageHeaders = { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }
+
   const clientResp = await fetch(
-    `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=access_password_hash`,
-    { headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` } },
+    `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id`,
+    { headers: storageHeaders },
   )
   if (!clientResp.ok) {
     res.status(502).json({ error: `Supabase respondió ${clientResp.status} al leer el cliente.` })
     return
   }
-  const [clientRow] = (await clientResp.json()) as Array<{ access_password_hash: string | null }>
+  const [clientRow] = (await clientResp.json()) as Array<{ id: string }>
   if (!clientRow) {
     res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
     return
   }
-  if (clientRow.access_password_hash) {
-    const authHeader = req.headers?.authorization ?? ''
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-    const secret = process.env.AUTH_TOKEN_SECRET
-    if (!secret || !token || !verifyToken(token, slug, secret)) {
-      res.status(401).json({ error: 'Este informe está protegido con contraseña. Vuelve a introducirla.' })
+
+  const secret = process.env.AUTH_TOKEN_SECRET
+  const authHeader = req.headers?.authorization ?? ''
+  const bearer = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+  const userId = secret && bearer ? verifyUserToken(bearer, secret) : null
+  if (!userId) {
+    res.status(401).json({ error: 'No tienes acceso a este informe. Inicia sesión de nuevo.' })
+    return
+  }
+  const userResp = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}&select=role`, { headers: storageHeaders })
+  const [user] = userResp.ok ? ((await userResp.json()) as Array<{ role: string }>) : []
+  if (!user || (user.role !== 'admin' && user.role !== 'project_manager')) {
+    res.status(401).json({ error: 'No autorizado.' })
+    return
+  }
+  if (user.role !== 'admin') {
+    const accessResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_client_access?user_id=eq.${userId}&client_id=eq.${clientRow.id}&select=id`,
+      { headers: storageHeaders },
+    )
+    const rows = accessResp.ok ? ((await accessResp.json()) as Array<{ id: string }>) : []
+    if (rows.length === 0) {
+      res.status(401).json({ error: 'No tienes acceso a este informe.' })
       return
     }
   }

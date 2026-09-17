@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { authHeaders } from './authToken'
 
 /** Datos reales del cliente (tabla `clients` de Supabase), independientes de
  * si el resto del dashboard está en modo mock o live. */
@@ -9,7 +10,6 @@ export interface ClientInfo {
   sector: string | null
   website: string | null
   logoUrl: string | null
-  hasPassword: boolean
   /** 'leadgen' | 'ecommerce' | null (sin definir todavía) — cambia qué KPIs
    * destaca Paid Media. */
   businessType: 'leadgen' | 'ecommerce' | null
@@ -54,7 +54,7 @@ export function useClientInfo(clientSlug: string) {
     setState((s) => ({ ...s, loading: true, error: null }))
     try {
       const res = await fetch(`/api/clients?slug=${encodeURIComponent(clientSlug)}`, {
-        headers: { Accept: 'application/json' },
+        headers: { Accept: 'application/json', ...authHeaders() },
       })
       if (!res.ok) throw new Error(`El servidor respondió ${res.status}`)
       const body = await res.json()
@@ -67,7 +67,6 @@ export function useClientInfo(clientSlug: string) {
           sector: row.sector,
           website: row.website,
           logoUrl: row.logo_url,
-          hasPassword: !!row.hasPassword,
           businessType: row.business_type === 'leadgen' || row.business_type === 'ecommerce' ? row.business_type : null,
           cplTarget: typeof row.cpl_target === 'number' ? row.cpl_target : null,
           leadsTargetMonthly: typeof row.leads_target_monthly === 'number' ? row.leads_target_monthly : null,

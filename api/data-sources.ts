@@ -10,9 +10,8 @@
  * en cada petición a partir del slug (columna `clients.slug`), no de una
  * variable de entorno fija.
  *
- * Si el cliente tiene contraseña activada (clients.access_password_hash), se
- * exige el token de sesión (Authorization: Bearer <token>, emitido por
- * /api/verify-access) tanto para leer como para guardar.
+ * Exige un usuario con acceso a ese cliente (Authorization: Bearer <token>,
+ * emitido por /api/auth?action=login) tanto para leer como para guardar.
  */
 import { timingSafeEqual, createHmac } from 'crypto'
 
@@ -20,33 +19,54 @@ async function resolveClient(
   supabaseUrl: string,
   serviceRoleKey: string,
   slug: string,
-): Promise<{ id: string; access_password_hash: string | null } | null> {
-  const url = `${supabaseUrl}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,access_password_hash`
+): Promise<{ id: string } | null> {
+  const url = `${supabaseUrl}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id`
   const resp = await fetch(url, {
     headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
   })
   if (!resp.ok) return null
-  const rows = (await resp.json()) as Array<{ id: string; access_password_hash: string | null }>
+  const rows = (await resp.json()) as Array<{ id: string }>
   return rows[0] ?? null
 }
 
-function verifyToken(token: string, subject: string, secret: string): boolean {
-  const [expiryStr, sig] = token.split('.')
-  const expiry = Number(expiryStr)
-  if (!expiry || !sig || Date.now() > expiry) return false
-  const expected = createHmac('sha256', secret).update(`${subject}:${expiry}`).digest('hex')
-  const a = Buffer.from(sig, 'hex')
-  const b = Buffer.from(expected, 'hex')
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
+function verifyUserToken(token: string, secret: string): string | null {
+  try {
+    const [userId, expiryStr, sig] = Buffer.from(token, 'base64url').toString('utf8').split('.')
+    const expiry = Number(expiryStr)
+    if (!userId || !expiry || !sig || Date.now() > expiry) return null
+    const expected = createHmac('sha256', secret).update(`${userId}:${expiry}`).digest('hex')
+    const a = Buffer.from(sig, 'hex')
+    const b = Buffer.from(expected, 'hex')
+    if (a.length !== b.length) return null
+    return timingSafeEqual(a, b) ? userId : null
+  } catch {
+    return null
+  }
 }
 
-function checkAccess(req: any, client: { access_password_hash: string | null }, slug: string): boolean {
-  if (!client.access_password_hash) return true
+/** Comprueba que quien hace la petición es un usuario con acceso a este
+ * cliente (admin: acceso implícito a todos; el resto: fila en
+ * user_client_access). */
+async function checkAccess(req: any, clientId: string, supabaseUrl: string, serviceRoleKey: string): Promise<boolean> {
+  const secret = process.env.AUTH_TOKEN_SECRET
+  if (!secret) return false
   const authHeader = req.headers?.authorization ?? ''
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-  const secret = process.env.AUTH_TOKEN_SECRET
-  return !!secret && !!token && verifyToken(token, slug, secret)
+  const userId = token ? verifyUserToken(token, secret) : null
+  if (!userId) return false
+  const headers = { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` }
+  const userResp = await fetch(`${supabaseUrl}/rest/v1/users?id=eq.${userId}&select=role`, { headers })
+  if (!userResp.ok) return false
+  const [user] = (await userResp.json()) as Array<{ role: string }>
+  if (!user) return false
+  if (user.role === 'admin') return true
+  const accessResp = await fetch(
+    `${supabaseUrl}/rest/v1/user_client_access?user_id=eq.${userId}&client_id=eq.${clientId}&select=id`,
+    { headers },
+  )
+  if (!accessResp.ok) return false
+  const rows = (await accessResp.json()) as Array<{ id: string }>
+  return rows.length > 0
 }
 
 export default async function handler(req: any, res: any) {
@@ -79,7 +99,7 @@ async function handleRequest(req: any, res: any) {
       res.status(400).json({ error: 'Falta el parámetro client en la petición.' })
       return
     }
-    let client: { id: string; access_password_hash: string | null } | null
+    let client: { id: string } | null
     try {
       client = await resolveClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
     } catch (e) {
@@ -90,8 +110,8 @@ async function handleRequest(req: any, res: any) {
       res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
       return
     }
-    if (!checkAccess(req, client, slug)) {
-      res.status(401).json({ error: 'Este informe está protegido con contraseña. Vuelve a introducirla.' })
+    if (!(await checkAccess(req, client.id, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY))) {
+      res.status(401).json({ error: 'No tienes acceso a este informe. Inicia sesión de nuevo.' })
       return
     }
     try {
@@ -125,7 +145,7 @@ async function handleRequest(req: any, res: any) {
       const digits = externalId.replace(/^act_/i, '').trim()
       externalId = digits ? `act_${digits}` : ''
     }
-    let client: { id: string; access_password_hash: string | null } | null
+    let client: { id: string } | null
     try {
       client = await resolveClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
     } catch (e) {
@@ -136,8 +156,8 @@ async function handleRequest(req: any, res: any) {
       res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
       return
     }
-    if (!checkAccess(req, client, slug)) {
-      res.status(401).json({ error: 'Este informe está protegido con contraseña. Vuelve a introducirla.' })
+    if (!(await checkAccess(req, client.id, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY))) {
+      res.status(401).json({ error: 'No tienes acceso a este informe. Inicia sesión de nuevo.' })
       return
     }
     try {

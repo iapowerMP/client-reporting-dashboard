@@ -13,35 +13,70 @@
  *         identifica al cliente en la URL (/c/<slug>/...).
  * PATCH { client, name?, sector?, website?, logoUrl?, businessType?,
  *          cplTarget?, leadsTargetMonthly?, roasTarget?, revenueTargetMonthly?,
- *          reportVisibility?, groupId?, newGroupName?, password?, removePassword? }
+ *          reportVisibility?, groupId?, newGroupName? }
  *         -> actualiza los datos del cliente (identificado por su slug actual).
  *         Si cambia el nombre, el slug (y por tanto la URL /c/<slug>/...) se
- *         regenera a partir del nuevo nombre. Si el cliente ya tiene
- *         contraseña activada, el PATCH exige el token de sesión (Authorization:
- *         Bearer <token>, emitido por /api/verify-access) para poder aplicar
- *         cualquier cambio, incluida la propia contraseña.
+ *         regenera a partir del nuevo nombre. Exige un usuario con acceso a
+ *         ese cliente y rol admin o project_manager (Authorization: Bearer
+ *         <token>, emitido por /api/auth?action=login) — un usuario con rol
+ *         cliente no puede tocar esta pantalla.
  *         groupId: une el cliente a un grupo ya existente ('' lo saca del
  *         grupo). newGroupName: crea un grupo nuevo (o reutiliza uno con el
  *         mismo nombre, sin distinguir mayúsculas) y une el cliente a él —
  *         tiene prioridad sobre groupId si se envían ambos.
  */
-import { randomBytes, scryptSync, timingSafeEqual, createHmac } from 'crypto'
+import { timingSafeEqual, createHmac } from 'crypto'
 
-function hashPassword(password: string): string {
-  const salt = randomBytes(16).toString('hex')
-  const hash = scryptSync(password, salt, 64).toString('hex')
-  return `${salt}:${hash}`
+function verifyUserToken(token: string, secret: string): string | null {
+  try {
+    const [userId, expiryStr, sig] = Buffer.from(token, 'base64url').toString('utf8').split('.')
+    const expiry = Number(expiryStr)
+    if (!userId || !expiry || !sig || Date.now() > expiry) return null
+    const expected = createHmac('sha256', secret).update(`${userId}:${expiry}`).digest('hex')
+    const a = Buffer.from(sig, 'hex')
+    const b = Buffer.from(expected, 'hex')
+    if (a.length !== b.length) return null
+    return timingSafeEqual(a, b) ? userId : null
+  } catch {
+    return null
+  }
 }
 
-function verifyToken(token: string, subject: string, secret: string): boolean {
-  const [expiryStr, sig] = token.split('.')
-  const expiry = Number(expiryStr)
-  if (!expiry || !sig || Date.now() > expiry) return false
-  const expected = createHmac('sha256', secret).update(`${subject}:${expiry}`).digest('hex')
-  const a = Buffer.from(sig, 'hex')
-  const b = Buffer.from(expected, 'hex')
-  if (a.length !== b.length) return false
-  return timingSafeEqual(a, b)
+/** Usuario autenticado a partir del header Authorization, o null. */
+async function getRequestUser(
+  req: any,
+  supabaseUrl: string,
+  serviceRoleKey: string,
+): Promise<{ id: string; role: string } | null> {
+  const secret = process.env.AUTH_TOKEN_SECRET
+  if (!secret) return null
+  const authHeader = req.headers?.authorization ?? ''
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
+  const userId = token ? verifyUserToken(token, secret) : null
+  if (!userId) return null
+  const resp = await fetch(`${supabaseUrl}/rest/v1/users?id=eq.${userId}&select=id,role`, {
+    headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` },
+  })
+  if (!resp.ok) return null
+  const [user] = (await resp.json()) as Array<{ id: string; role: string }>
+  return user ?? null
+}
+
+/** ¿Tiene este usuario acceso al cliente clientId? (admin: siempre). */
+async function hasClientAccess(
+  user: { id: string; role: string },
+  clientId: string,
+  supabaseUrl: string,
+  serviceRoleKey: string,
+): Promise<boolean> {
+  if (user.role === 'admin') return true
+  const resp = await fetch(
+    `${supabaseUrl}/rest/v1/user_client_access?user_id=eq.${user.id}&client_id=eq.${clientId}&select=id`,
+    { headers: { apikey: serviceRoleKey, Authorization: `Bearer ${serviceRoleKey}` } },
+  )
+  if (!resp.ok) return false
+  const rows = (await resp.json()) as Array<{ id: string }>
+  return rows.length > 0
 }
 
 function slugify(name: string): string {
@@ -82,6 +117,11 @@ async function handleRequest(req: any, res: any) {
     const wantsGroups = req.query?.groups === '1'
 
     if (wantsGroups) {
+      const user = await getRequestUser(req, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+      if (!user || (user.role !== 'admin' && user.role !== 'project_manager')) {
+        res.status(401).json({ error: 'No autorizado.' })
+        return
+      }
       try {
         const resp = await fetch(`${SUPABASE_URL}/rest/v1/client_groups?select=id,name&order=name.asc`, { headers })
         if (!resp.ok) {
@@ -97,7 +137,7 @@ async function handleRequest(req: any, res: any) {
 
     if (slug) {
       try {
-        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,access_password_hash,business_type,cpl_target,leads_target_monthly,roas_target,revenue_target_monthly,report_template,report_visibility,group_id`
+        const url = `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id,name,slug,sector,website,logo_url,business_type,cpl_target,leads_target_monthly,roas_target,revenue_target_monthly,report_template,report_visibility,group_id`
         const resp = await fetch(url, { headers })
         if (!resp.ok) {
           res.status(502).json({ error: `Supabase respondió ${resp.status} al leer clients.` })
@@ -108,7 +148,14 @@ async function handleRequest(req: any, res: any) {
           res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
           return
         }
-        const { access_password_hash, group_id, ...publicRow } = row
+
+        const user = await getRequestUser(req, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+        if (!user || !(await hasClientAccess(user, row.id, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY))) {
+          res.status(401).json({ error: 'No tienes acceso a este informe. Inicia sesión de nuevo.' })
+          return
+        }
+
+        const { group_id, ...publicRow } = row
 
         let group = null
         if (group_id) {
@@ -125,10 +172,16 @@ async function handleRequest(req: any, res: any) {
           }
         }
 
-        res.status(200).json({ client: { ...publicRow, hasPassword: !!access_password_hash, group } })
+        res.status(200).json({ client: { ...publicRow, group } })
       } catch {
         res.status(502).json({ error: 'No se pudo leer clients desde Supabase.' })
       }
+      return
+    }
+
+    const user = await getRequestUser(req, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    if (!user || user.role !== 'admin') {
+      res.status(401).json({ error: 'No autorizado.' })
       return
     }
 
@@ -147,6 +200,12 @@ async function handleRequest(req: any, res: any) {
   }
 
   if (req.method === 'POST') {
+    const user = await getRequestUser(req, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    if (!user || (user.role !== 'admin' && user.role !== 'project_manager')) {
+      res.status(401).json({ error: 'No autorizado.' })
+      return
+    }
+
     const { name, sector, website } = req.body ?? {}
     if (!name || typeof name !== 'string') {
       res.status(400).json({ error: 'Falta el campo name.' })
@@ -178,6 +237,17 @@ async function handleRequest(req: any, res: any) {
         return
       }
       const [row] = await insertResp.json()
+
+      // Un project_manager que crea un cliente necesita acceso inmediato a
+      // su propio informe (admin ya tiene acceso implícito a todos).
+      if (user.role === 'project_manager') {
+        await fetch(`${SUPABASE_URL}/rest/v1/user_client_access`, {
+          method: 'POST',
+          headers: { ...headers, Prefer: 'return=minimal' },
+          body: JSON.stringify([{ user_id: user.id, client_id: row.id }]),
+        })
+      }
+
       res.status(200).json({ client: row })
     } catch {
       res.status(502).json({ error: 'No se pudo crear el cliente en Supabase.' })
@@ -200,8 +270,6 @@ async function handleRequest(req: any, res: any) {
       reportVisibility,
       groupId,
       newGroupName,
-      password,
-      removePassword,
     } = req.body ?? {}
     if (!slug || typeof slug !== 'string') {
       res.status(400).json({ error: 'Falta el campo client (slug del cliente).' })
@@ -242,11 +310,6 @@ async function handleRequest(req: any, res: any) {
         if (typeof val === 'boolean') sanitized[id] = val
       }
       updates.report_visibility = sanitized
-    }
-    if (typeof password === 'string' && password.trim()) {
-      updates.access_password_hash = hashPassword(password.trim())
-    } else if (removePassword === true) {
-      updates.access_password_hash = null
     }
 
     // Grupo empresarial: newGroupName crea uno nuevo (o reutiliza uno ya
@@ -294,10 +357,10 @@ async function handleRequest(req: any, res: any) {
     }
 
     try {
-      // Si el cliente ya tiene contraseña activada, cualquier cambio (incluida
-      // la propia contraseña) exige un token de sesión válido para ese slug.
+      // Solo admin/project_manager pueden tocar la Configuración de un
+      // informe, y solo si tienen acceso a ese cliente concreto.
       const currentResp = await fetch(
-        `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=access_password_hash`,
+        `${SUPABASE_URL}/rest/v1/clients?slug=eq.${encodeURIComponent(slug)}&select=id`,
         { headers },
       )
       if (!currentResp.ok) {
@@ -309,14 +372,14 @@ async function handleRequest(req: any, res: any) {
         res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
         return
       }
-      if (currentRow.access_password_hash) {
-        const authHeader = req.headers?.authorization ?? ''
-        const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
-        const secret = process.env.AUTH_TOKEN_SECRET
-        if (!secret || !token || !verifyToken(token, slug, secret)) {
-          res.status(401).json({ error: 'Este informe está protegido con contraseña. Vuelve a introducirla.' })
-          return
-        }
+      const user = await getRequestUser(req, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+      if (!user || (user.role !== 'admin' && user.role !== 'project_manager')) {
+        res.status(401).json({ error: 'No autorizado.' })
+        return
+      }
+      if (!(await hasClientAccess(user, currentRow.id, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY))) {
+        res.status(401).json({ error: 'No tienes acceso a este informe.' })
+        return
       }
 
       // Si cambia el nombre, la URL (slug) le sigue, para que el enlace del
@@ -357,8 +420,7 @@ async function handleRequest(req: any, res: any) {
         res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
         return
       }
-      const { access_password_hash, ...publicRow } = row
-      res.status(200).json({ client: { ...publicRow, hasPassword: !!access_password_hash } })
+      res.status(200).json({ client: row })
     } catch {
       res.status(502).json({ error: 'No se pudo actualizar el cliente en Supabase.' })
     }

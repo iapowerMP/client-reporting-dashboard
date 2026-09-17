@@ -404,3 +404,79 @@ create table if not exists client_groups (
 );
 
 alter table clients add column if not exists group_id uuid references client_groups(id);
+
+-- ----------------------------------------------------------------------------
+--  Usuarios con cuenta propia (panel /admin y acceso a informes). Sustituye
+--  a la contraseña compartida por informe (clients.access_password_hash) y a
+--  la contraseña única de equipo para /admin (env var ADMIN_PASSWORD): ahora
+--  cada persona tiene su propia cuenta y un rol.
+--    - admin:            acceso total a /admin y a cualquier informe.
+--    - project_manager:  acceso a los informes que se le asignen, incluida
+--                         la pestaña Settings.
+--    - cliente:          acceso a los informes que se le asignen, sin
+--                         Settings.
+--  password_hash usa el mismo formato "salt:hash" (scrypt) que ya se usaba
+--  en access_password_hash. must_change_password fuerza a establecer una
+--  contraseña propia en el primer login (la inicial la genera el admin al
+--  crear el usuario y se le comparte a mano, sin email).
+-- ----------------------------------------------------------------------------
+create table if not exists users (
+  id                   uuid primary key default gen_random_uuid(),
+  email                text not null unique,
+  password_hash        text not null,
+  name                 text,
+  role                 text not null check (role in ('admin', 'project_manager', 'cliente')),
+  must_change_password boolean not null default true,
+  last_login_at        timestamptz,
+  created_at           timestamptz not null default now()
+);
+
+-- ----------------------------------------------------------------------------
+--  Qué informes puede ver cada usuario (no aplica a role='admin', que ve
+--  todos implícitamente). last_viewed_at se actualiza cada vez que el
+--  usuario entra a ese informe (no en cada pestaña) — de ahí sale el dato de
+--  "último uso" que se muestra en Admin → Usuarios, para saber qué
+--  clientes/proyectos usa más o menos cada persona.
+-- ----------------------------------------------------------------------------
+create table if not exists user_client_access (
+  id             uuid primary key default gen_random_uuid(),
+  user_id        uuid not null references users(id) on delete cascade,
+  client_id      uuid not null references clients(id) on delete cascade,
+  last_viewed_at timestamptz,
+  created_at     timestamptz not null default now(),
+  unique (user_id, client_id)
+);
+
+create index if not exists idx_user_client_access_client on user_client_access (client_id);
+create index if not exists idx_user_client_access_user on user_client_access (user_id);
+
+-- Ya no existe contraseña compartida por informe: el acceso pasa a ser
+-- exclusivamente por usuario nombrado (tabla users + user_client_access).
+alter table clients drop column if exists access_password_hash;
+
+-- ----------------------------------------------------------------------------
+--  Bandeja de incidencias: formulario de "¿Necesitas ayuda? / Reportar un
+--  error" enlazado en todos los informes. attachment_url apunta al bucket de
+--  Storage 'incidencias' (igual que clients.logo_url apunta a 'logos').
+-- ----------------------------------------------------------------------------
+create table if not exists support_requests (
+  id             bigint generated always as identity primary key,
+  client_id      uuid references clients(id) on delete set null,
+  user_id        uuid references users(id) on delete set null,
+  type           text not null check (type in ('ayuda', 'error')),
+  message        text not null,
+  attachment_url text,
+  status         text not null default 'abierto' check (status in ('abierto', 'resuelto')),
+  created_at     timestamptz not null default now(),
+  resolved_at    timestamptz
+);
+
+create index if not exists idx_support_requests_status on support_requests (status, created_at desc);
+
+insert into storage.buckets (id, name, public)
+values ('incidencias', 'incidencias', true)
+on conflict (id) do nothing;
+
+-- Motivo del fallo de una sincronización automática (Admin → Monitorización),
+-- además del status 'Completado'/'Error' que ya existía.
+alter table sync_logs add column if not exists error_message text;

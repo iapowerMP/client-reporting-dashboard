@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
+import SupportForm from '@/components/shared/SupportForm'
 import type { ClientInfo } from '@/lib/useClientInfo'
 
 /** Título de la sección según el sufijo de ruta dentro de /c/:clientSlug/... */
@@ -17,17 +18,22 @@ const ROUTE_TITLES: Record<string, string> = {
 export default function Layout({
   children,
   clientSlug,
+  clientId,
   clientName,
   logoUrl,
   reportTemplate = 'standard',
   group = null,
+  showSettings = true,
 }: {
   children: ReactNode
   clientSlug: string
+  clientId?: string
   clientName?: string
   logoUrl?: string | null
   reportTemplate?: 'standard' | 'programmatic'
   group?: ClientInfo['group']
+  /** Falso para el rol cliente: oculta el acceso a Configuración. */
+  showSettings?: boolean
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { pathname } = useLocation()
@@ -43,6 +49,7 @@ export default function Layout({
         reportTemplate={reportTemplate}
         group={group}
         currentSuffix={suffix}
+        showSettings={showSettings}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
       />
@@ -54,6 +61,8 @@ export default function Layout({
           {children}
         </main>
       </div>
+
+      <SupportForm clientId={clientId} />
     </div>
   )
 }
