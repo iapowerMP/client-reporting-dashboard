@@ -209,7 +209,7 @@ function UserForm({
         const resp = await fetch('/api/admin?action=update-user', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...authHeaders() },
-          body: JSON.stringify({ id: user.id, role, clientIds: role === 'admin' ? [] : clientIds }),
+          body: JSON.stringify({ id: user.id, role, name: name.trim(), clientIds: role === 'admin' ? [] : clientIds }),
         })
         const body = await resp.json().catch(() => ({}))
         if (!resp.ok) throw new Error(body.error ?? 'No se pudo actualizar el usuario.')
@@ -297,9 +297,15 @@ function UserForm({
               </>
             )}
             {user && (
-              <p className="text-sm text-text-secondary">
-                {user.name || user.email} <span className="text-xs">({user.email})</span>
-              </p>
+              <>
+                <p className="text-xs text-text-secondary">{user.email}</p>
+                <input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Nombre"
+                  className={inputClass}
+                />
+              </>
             )}
 
             <div>

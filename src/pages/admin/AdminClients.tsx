@@ -10,6 +10,7 @@ interface AdminClient {
   sector: string | null
   website: string | null
   createdAt: string
+  createdBy: string
   platforms: string[]
 }
 
@@ -53,6 +54,7 @@ export default function AdminClients() {
             <th className="px-4 py-3 font-medium">Sector</th>
             <th className="px-4 py-3 font-medium">Integraciones</th>
             <th className="px-4 py-3 font-medium">Creado</th>
+            <th className="px-4 py-3 font-medium">Creado por</th>
             <th className="px-4 py-3 font-medium"></th>
           </tr>
         </thead>
@@ -66,6 +68,7 @@ export default function AdminClients() {
               <td className="px-4 py-3 text-text-secondary">{c.sector ?? '—'}</td>
               <td className="px-4 py-3 text-text-secondary">{c.platforms.length ? c.platforms.join(', ') : '—'}</td>
               <td className="px-4 py-3 text-text-secondary">{new Date(c.createdAt).toLocaleDateString('es-ES')}</td>
+              <td className="px-4 py-3 text-text-secondary">{c.createdBy}</td>
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end gap-2">
                   <a
@@ -86,7 +89,7 @@ export default function AdminClients() {
           ))}
           {clients.length === 0 && (
             <tr>
-              <td colSpan={5} className="px-4 py-6 text-center text-text-secondary">
+              <td colSpan={6} className="px-4 py-6 text-center text-text-secondary">
                 Todavía no hay clientes.
               </td>
             </tr>

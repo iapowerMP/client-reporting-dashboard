@@ -230,7 +230,7 @@ async function handleRequest(req: any, res: any) {
       const insertResp = await fetch(`${SUPABASE_URL}/rest/v1/clients`, {
         method: 'POST',
         headers: { ...headers, Prefer: 'return=representation' },
-        body: JSON.stringify([{ name, sector: sector || null, website: website || null, slug }]),
+        body: JSON.stringify([{ name, sector: sector || null, website: website || null, slug, created_by: user.id }]),
       })
       if (!insertResp.ok) {
         res.status(502).json({ error: `Supabase respondió ${insertResp.status} al crear el cliente.` })

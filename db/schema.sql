@@ -480,3 +480,8 @@ on conflict (id) do nothing;
 -- Motivo del fallo de una sincronización automática (Admin → Monitorización),
 -- además del status 'Completado'/'Error' que ya existía.
 alter table sync_logs add column if not exists error_message text;
+
+-- Quién dio de alta el cliente (Admin → Clientes). Null en los clientes
+-- creados antes de que existieran cuentas de usuario, o si se borra la
+-- cuenta que lo creó — el frontend lo muestra como "Admin" en ese caso.
+alter table clients add column if not exists created_by uuid references users(id) on delete set null;

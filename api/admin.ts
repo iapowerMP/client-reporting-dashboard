@@ -176,11 +176,13 @@ async function handleClients(req: any, res: any) {
   const headers = { apikey: SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` }
 
   try {
-    const [clientsResp, sourcesResp] = await Promise.all([
-      fetch(`${SUPABASE_URL}/rest/v1/clients?select=id,name,slug,sector,website,created_at&order=created_at.desc`, {
-        headers,
-      }),
+    const [clientsResp, sourcesResp, usersResp] = await Promise.all([
+      fetch(
+        `${SUPABASE_URL}/rest/v1/clients?select=id,name,slug,sector,website,created_at,created_by&order=created_at.desc`,
+        { headers },
+      ),
       fetch(`${SUPABASE_URL}/rest/v1/data_sources?select=client_id,platform`, { headers }),
+      fetch(`${SUPABASE_URL}/rest/v1/users?select=id,name,email`, { headers }),
     ])
     if (!clientsResp.ok) {
       res.status(502).json({ error: `Supabase respondió ${clientsResp.status} al leer clients.` })
@@ -188,6 +190,10 @@ async function handleClients(req: any, res: any) {
     }
     if (!sourcesResp.ok) {
       res.status(502).json({ error: `Supabase respondió ${sourcesResp.status} al leer data_sources.` })
+      return
+    }
+    if (!usersResp.ok) {
+      res.status(502).json({ error: `Supabase respondió ${usersResp.status} al leer users.` })
       return
     }
 
@@ -198,8 +204,10 @@ async function handleClients(req: any, res: any) {
       sector: string | null
       website: string | null
       created_at: string
+      created_by: string | null
     }>
     const sourceRows = (await sourcesResp.json()) as Array<{ client_id: string; platform: string }>
+    const userRows = (await usersResp.json()) as Array<{ id: string; name: string | null; email: string }>
 
     const platformsByClient = new Map<string, string[]>()
     for (const s of sourceRows) {
@@ -207,7 +215,11 @@ async function handleClients(req: any, res: any) {
       list.push(s.platform)
       platformsByClient.set(s.client_id, list)
     }
+    const userById = new Map(userRows.map((u) => [u.id, u.name || u.email]))
 
+    // Clientes creados antes de que existieran cuentas de usuario (o cuya
+    // cuenta creadora se ha borrado desde entonces) no tienen created_by:
+    // se muestran como "Admin" en vez de dejarlo en blanco.
     const clients = clientRows.map((c) => ({
       id: c.id,
       name: c.name,
@@ -215,6 +227,7 @@ async function handleClients(req: any, res: any) {
       sector: c.sector,
       website: c.website,
       createdAt: c.created_at,
+      createdBy: (c.created_by && userById.get(c.created_by)) || 'Admin',
       platforms: platformsByClient.get(c.id) ?? [],
     }))
 
@@ -371,7 +384,7 @@ async function handleUpdateUser(req: any, res: any) {
   const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET } = env
   if (!(await requireAdmin(req, res, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET))) return
 
-  const { id, role, clientIds } = req.body ?? {}
+  const { id, role, name, clientIds } = req.body ?? {}
   if (typeof id !== 'string' || !id) {
     res.status(400).json({ error: 'Falta el campo id.' })
     return
@@ -384,11 +397,15 @@ async function handleUpdateUser(req: any, res: any) {
   }
 
   try {
-    if (role === 'admin' || role === 'project_manager' || role === 'cliente') {
+    const updates: Record<string, string> = {}
+    if (role === 'admin' || role === 'project_manager' || role === 'cliente') updates.role = role
+    if (typeof name === 'string') updates.name = name.trim()
+
+    if (Object.keys(updates).length > 0) {
       const resp = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${id}`, {
         method: 'PATCH',
         headers: { ...headers, Prefer: 'return=minimal' },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify(updates),
       })
       if (!resp.ok) {
         res.status(502).json({ error: `Supabase respondió ${resp.status} al actualizar el usuario.` })
