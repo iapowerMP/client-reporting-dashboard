@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, X, Copy, Check } from 'lucide-react'
+import { Plus, X, Copy, Check, KeyRound } from 'lucide-react'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 import { authHeaders } from '@/lib/authToken'
 import { cn } from '@/lib/utils'
@@ -64,6 +64,8 @@ export default function AdminUsers() {
   const [loading, setLoading] = useState(true)
   const [formOpen, setFormOpen] = useState(false)
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null)
+  const [resettingId, setResettingId] = useState<string | null>(null)
+  const [resetResult, setResetResult] = useState<{ email: string; tempPassword: string } | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -82,6 +84,28 @@ export default function AdminUsers() {
   useEffect(() => {
     load()
   }, [])
+
+  const handleReset = async (u: AdminUser) => {
+    if (!window.confirm(`¿Restablecer la contraseña de ${u.name || u.email}? La contraseña actual dejará de funcionar.`)) {
+      return
+    }
+    setResettingId(u.id)
+    setError(null)
+    try {
+      const resp = await fetch('/api/admin?action=reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ id: u.id }),
+      })
+      const body = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(body.error ?? 'No se pudo restablecer la contraseña.')
+      setResetResult({ email: u.email, tempPassword: body.tempPassword })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo restablecer la contraseña.')
+    } finally {
+      setResettingId(null)
+    }
+  }
 
   if (loading) return <Loading />
   if (error) return <ErrorState message={error} />
@@ -139,15 +163,25 @@ export default function AdminUsers() {
                 </td>
                 <td className="px-4 py-3 text-text-secondary">{formatDate(u.lastLoginAt)}</td>
                 <td className="px-4 py-3">
-                  <button
-                    onClick={() => {
-                      setEditingUser(u)
-                      setFormOpen(true)
-                    }}
-                    className="rounded-control border border-border px-2.5 py-1.5 text-xs text-text-primary hover:bg-white/5"
-                  >
-                    Editar
-                  </button>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => handleReset(u)}
+                      disabled={resettingId === u.id}
+                      className="inline-flex items-center gap-1 rounded-control border border-border px-2.5 py-1.5 text-xs text-text-primary hover:bg-white/5 disabled:opacity-60"
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
+                      {resettingId === u.id ? 'Restableciendo...' : 'Restablecer contraseña'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingUser(u)
+                        setFormOpen(true)
+                      }}
+                      className="rounded-control border border-border px-2.5 py-1.5 text-xs text-text-primary hover:bg-white/5"
+                    >
+                      Editar
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -173,6 +207,59 @@ export default function AdminUsers() {
           }}
         />
       )}
+
+      {resetResult && (
+        <ResetPasswordResult result={resetResult} onClose={() => setResetResult(null)} />
+      )}
+    </div>
+  )
+}
+
+/** Muestra la contraseña temporal generada por "Restablecer contraseña",
+ * una sola vez (igual que al crear un usuario) — no se puede volver a
+ * consultar después de cerrar este modal. */
+function ResetPasswordResult({
+  result,
+  onClose,
+}: {
+  result: { email: string; tempPassword: string }
+  onClose: () => void
+}) {
+  const [copied, setCopied] = useState(false)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+      <div className="w-full max-w-md rounded-card border border-border bg-card p-6">
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-base font-bold text-white">Contraseña restablecida</h2>
+          <button onClick={onClose} className="text-text-secondary hover:text-white">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="mb-4 text-sm text-text-secondary">
+          Nueva contraseña temporal para <span className="text-white">{result.email}</span>. Cópiala y
+          compártela — no se volverá a mostrar. Al iniciar sesión tendrá que cambiarla.
+        </p>
+        <div className="mb-4 flex items-center gap-2 rounded-control border border-border bg-base px-3 py-2">
+          <code className="flex-1 text-sm text-white">{result.tempPassword}</code>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(result.tempPassword).catch(() => {})
+              setCopied(true)
+            }}
+            className="text-text-secondary hover:text-white"
+            aria-label="Copiar contraseña"
+          >
+            {copied ? <Check className="h-4 w-4 text-positive" /> : <Copy className="h-4 w-4" />}
+          </button>
+        </div>
+        <button
+          onClick={onClose}
+          className="w-full rounded-control bg-accent px-4 py-2 text-sm font-semibold text-black transition-opacity hover:opacity-90"
+        >
+          Hecho
+        </button>
+      </div>
     </div>
   )
 }

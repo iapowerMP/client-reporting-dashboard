@@ -1,6 +1,6 @@
 /**
  * Vercel Function: /api/admin?action=clients|users|create-user|update-user|
- *   sync-status|support-create|support-list|support-resolve
+ *   reset-password|sync-status|support-create|support-list|support-resolve
  * Panel de administración general (/admin) y bandeja de incidencias,
  * unificados en un solo archivo (en vez de varias funciones separadas) para
  * no superar el límite de Serverless Functions del plan de Vercel. El login
@@ -16,8 +16,11 @@
  *   - action=create-user     (POST) Body: { email, name, role, clientIds[] }.
  *     Genera una contraseña temporal, la devuelve UNA VEZ en la respuesta
  *     (no se puede volver a consultar) para que el admin la comparta a mano.
- *   - action=update-user     (POST) Body: { id, role?, clientIds? }. Cambia el
- *     rol y/o la lista de informes asignados.
+ *   - action=update-user     (POST) Body: { id, role?, name?, clientIds? }.
+ *     Cambia el rol, el nombre y/o la lista de informes asignados.
+ *   - action=reset-password  (POST) Body: { id }. Genera una contraseña
+ *     temporal nueva (igual que create-user) y fuerza a cambiarla en el
+ *     próximo login — para cuando un usuario la ha perdido.
  *   - action=sync-status     (GET)  Últimas ejecuciones de sync_logs (todas
  *     las plataformas/clientes), para Admin → Monitorización.
  *   - action=support-create   (POST) Body: { clientId, type: 'ayuda'|'error',
@@ -146,6 +149,8 @@ export default async function handler(req: any, res: any) {
         return await handleCreateUser(req, res)
       case 'update-user':
         return await handleUpdateUser(req, res)
+      case 'reset-password':
+        return await handleResetPassword(req, res)
       case 'sync-status':
         return await handleSyncStatus(req, res)
       case 'support-create':
@@ -431,6 +436,48 @@ async function handleUpdateUser(req: any, res: any) {
     res.status(200).json({ ok: true })
   } catch {
     res.status(502).json({ error: 'No se pudo actualizar el usuario en Supabase.' })
+  }
+}
+
+/** action=reset-password — POST, Header: Authorization: Bearer <token> (admin)
+ * Body: { id }. Genera una contraseña temporal nueva, la devuelve en texto
+ * plano una sola vez (igual que create-user) y fuerza a cambiarla en el
+ * próximo login — para cuando un usuario ha perdido u olvidado la suya. */
+async function handleResetPassword(req: any, res: any) {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Método no permitido.' })
+    return
+  }
+  const env = requiredEnv(res)
+  if (!env) return
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET } = env
+  if (!(await requireAdmin(req, res, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET))) return
+
+  const { id } = req.body ?? {}
+  if (typeof id !== 'string' || !id) {
+    res.status(400).json({ error: 'Falta el campo id.' })
+    return
+  }
+
+  const tempPassword = generateTempPassword()
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ password_hash: hashPassword(tempPassword), must_change_password: true }),
+    })
+    if (!resp.ok) {
+      res.status(502).json({ error: `Supabase respondió ${resp.status} al restablecer la contraseña.` })
+      return
+    }
+    res.status(200).json({ tempPassword })
+  } catch {
+    res.status(502).json({ error: 'No se pudo restablecer la contraseña en Supabase.' })
   }
 }
 
