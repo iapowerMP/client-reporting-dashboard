@@ -321,7 +321,7 @@ async function handleCallback(req: any, res: any) {
       'Set-Cookie',
       `${SERVICE_CONFIG[state.service].pendingCookie}=${cookieValue}; Max-Age=${PENDING_TTL_S}; Path=/api/oauth-google; HttpOnly; Secure; SameSite=Lax`,
     )
-    res.writeHead(302, { Location: `${reportOrigin()}/c/${state.slug}/settings?google_oauth=${state.service}` })
+    res.writeHead(302, { Location: `${reportOrigin()}/${state.slug}/settings?google_oauth=${state.service}` })
     res.end()
   } catch (e) {
     res.status(502).send(htmlError((e as Error).message))

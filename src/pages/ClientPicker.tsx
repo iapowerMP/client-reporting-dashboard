@@ -43,7 +43,7 @@ function ClientList() {
       setName('')
       setSector('')
       await session.refresh()
-      window.location.href = `/c/${body.client.slug}`
+      window.location.href = `/${body.client.slug}`
     } catch (e) {
       setCreateError(e instanceof Error ? e.message : 'No se pudo crear el cliente.')
     } finally {
@@ -87,13 +87,10 @@ function ClientList() {
           {user.clients.map((c) => (
             <a
               key={c.id}
-              href={`/c/${c.slug}`}
+              href={`/${c.slug}`}
               className="flex items-center justify-between rounded-card border border-border bg-card p-4 transition-colors hover:bg-white/[0.03]"
             >
-              <div>
-                <p className="text-sm font-semibold text-white">{c.name}</p>
-                <p className="text-xs text-text-secondary">/c/{c.slug}</p>
-              </div>
+              <p className="text-sm font-semibold text-white">{c.name}</p>
               <ArrowRight className="h-4 w-4 text-text-secondary" />
             </a>
           ))}

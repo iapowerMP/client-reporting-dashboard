@@ -29,7 +29,7 @@ export default function App() {
         <Route path="incidencias" element={<AdminIncidencias />} />
         <Route path="monitorizacion" element={<AdminMonitorizacion />} />
       </Route>
-      <Route path="/c/:clientSlug" element={<ClientLayout />}>
+      <Route path="/:clientSlug" element={<ClientLayout />}>
         <Route index element={<Overview />} />
         <Route path="paid" element={<PaidMedia />} />
         <Route path="programatica" element={<Programmatic />} />

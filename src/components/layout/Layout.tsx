@@ -5,7 +5,7 @@ import TopBar from './TopBar'
 import SupportForm from '@/components/shared/SupportForm'
 import type { ClientInfo } from '@/lib/useClientInfo'
 
-/** Título de la sección según el sufijo de ruta dentro de /c/:clientSlug/... */
+/** Título de la sección según el sufijo de ruta dentro de /:clientSlug/... */
 const ROUTE_TITLES: Record<string, string> = {
   '': 'Overview',
   '/paid': 'Paid Media',
@@ -37,7 +37,7 @@ export default function Layout({
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { pathname } = useLocation()
-  const suffix = pathname.replace(`/c/${clientSlug}`, '')
+  const suffix = pathname.replace(`/${clientSlug}`, '')
   const title = ROUTE_TITLES[suffix] ?? 'Overview'
 
   return (

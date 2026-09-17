@@ -61,7 +61,7 @@ export default function AdminClients() {
             <tr key={c.id} className="border-b border-border last:border-0">
               <td className="px-4 py-3">
                 <p className="font-semibold text-white">{c.name}</p>
-                <p className="text-xs text-text-secondary">/c/{c.slug}</p>
+                <p className="text-xs text-text-secondary">/{c.slug}</p>
               </td>
               <td className="px-4 py-3 text-text-secondary">{c.sector ?? '—'}</td>
               <td className="px-4 py-3 text-text-secondary">{c.platforms.length ? c.platforms.join(', ') : '—'}</td>
@@ -69,13 +69,13 @@ export default function AdminClients() {
               <td className="px-4 py-3">
                 <div className="flex items-center justify-end gap-2">
                   <a
-                    href={`/c/${c.slug}`}
+                    href={`/${c.slug}`}
                     className="inline-flex items-center gap-1 rounded-control border border-border px-2.5 py-1.5 text-xs text-text-primary hover:bg-white/5"
                   >
                     <ExternalLink className="h-3.5 w-3.5" /> Ver
                   </a>
                   <a
-                    href={`/c/${c.slug}/settings`}
+                    href={`/${c.slug}/settings`}
                     className="inline-flex items-center gap-1 rounded-control border border-border px-2.5 py-1.5 text-xs text-text-primary hover:bg-white/5"
                   >
                     <SettingsIcon className="h-3.5 w-3.5" /> Configurar

@@ -75,7 +75,7 @@ export default function Sidebar({
   open,
   onClose,
 }: SidebarProps) {
-  const base = `/c/${clientSlug}`
+  const base = `/${clientSlug}`
   const displayName = clientName || clientSlug.replace(/-/g, ' ')
   const { isVisible } = useReportConfig()
   const [groupMenuOpen, setGroupMenuOpen] = useState(false)
@@ -147,7 +147,7 @@ export default function Sidebar({
                     {group.siblings.map((s) => (
                       <Link
                         key={s.slug}
-                        to={`/c/${s.slug}${currentSuffix}`}
+                        to={`/${s.slug}${currentSuffix}`}
                         onClick={() => {
                           setGroupMenuOpen(false)
                           onClose()

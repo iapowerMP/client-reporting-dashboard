@@ -780,7 +780,7 @@ export default function Settings() {
       const newSlug: string | undefined = body?.client?.slug
       if (newSlug && newSlug !== clientSlug) {
         showToast('Guardado — la URL del informe ha cambiado')
-        navigate(`/c/${newSlug}/settings`, { replace: true })
+        navigate(`/${newSlug}/settings`, { replace: true })
         return
       }
       setCreatingGroup(false)

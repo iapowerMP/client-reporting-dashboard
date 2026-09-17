@@ -8,7 +8,7 @@ import { useSession } from '@/lib/session'
 import Login from '@/pages/Login'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 
-/** Envuelve las rutas de un cliente concreto (/c/:clientSlug/...), aportando
+/** Envuelve las rutas de un cliente concreto (/:clientSlug/...), aportando
  * el slug al layout y reiniciando la configuración de visibilidad por cliente.
  * También carga los datos reales del cliente (nombre/logo) para el branding
  * del sidebar, y los expone a las páginas hijas vía contexto de ruta.
@@ -50,16 +50,16 @@ export default function ClientLayout() {
   }
 
   const canEditSettings = session.user.role === 'admin' || session.user.role === 'project_manager'
-  const suffix = pathname.replace(`/c/${clientSlug}`, '')
+  const suffix = pathname.replace(`/${clientSlug}`, '')
   if (suffix === '/settings' && !canEditSettings) {
-    return <Navigate to={`/c/${clientSlug}`} replace />
+    return <Navigate to={`/${clientSlug}`} replace />
   }
 
   // Informes especiales (report_template = 'programmatic'): las secciones
   // habituales (Overview/Paid/SEO/Social) no aplican, solo Configuración.
   const reportTemplate = clientInfo.data?.reportTemplate ?? 'standard'
   if (reportTemplate === 'programmatic' && suffix !== '/programatica' && suffix !== '/settings') {
-    return <Navigate to={`/c/${clientSlug}/programatica`} replace />
+    return <Navigate to={`/${clientSlug}/programatica`} replace />
   }
 
   return (

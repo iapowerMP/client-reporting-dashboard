@@ -10,12 +10,12 @@
  *                       para el desplegable de Configuración.
  * POST { name, sector?, website? } -> crea un cliente nuevo, generando un
  *         slug único a partir del nombre, y lo devuelve. Ese slug es el que
- *         identifica al cliente en la URL (/c/<slug>/...).
+ *         identifica al cliente en la URL (/<slug>/...).
  * PATCH { client, name?, sector?, website?, logoUrl?, businessType?,
  *          cplTarget?, leadsTargetMonthly?, roasTarget?, revenueTargetMonthly?,
  *          reportVisibility?, groupId?, newGroupName? }
  *         -> actualiza los datos del cliente (identificado por su slug actual).
- *         Si cambia el nombre, el slug (y por tanto la URL /c/<slug>/...) se
+ *         Si cambia el nombre, el slug (y por tanto la URL /<slug>/...) se
  *         regenera a partir del nuevo nombre. Exige un usuario con acceso a
  *         ese cliente y rol admin o project_manager (Authorization: Bearer
  *         <token>, emitido por /api/auth?action=login) — un usuario con rol
