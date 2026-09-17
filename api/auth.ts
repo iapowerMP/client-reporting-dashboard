@@ -11,6 +11,10 @@
  *     token firmado (válido 12h) + el rol + si debe cambiar la contraseña.
  *   - action=change-password  (POST) Header: Authorization: Bearer <token>.
  *     Body: { newPassword }. Re-hashea y desmarca must_change_password.
+ *   - action=update-profile   (POST) Header: Authorization: Bearer <token>.
+ *     Body: { name }. Cualquier usuario puede cambiar su propio nombre desde
+ *     "Perfil" (a diferencia de /api/admin?action=update-user, que solo
+ *     puede usar un admin y sobre cualquier cuenta).
  *   - action=me               (GET)  Header: Authorization: Bearer <token>.
  *     Devuelve el usuario y los informes a los que tiene acceso (todos, si
  *     es admin).
@@ -79,6 +83,8 @@ export default async function handler(req: any, res: any) {
         return await handleLogin(req, res)
       case 'change-password':
         return await handleChangePassword(req, res)
+      case 'update-profile':
+        return await handleUpdateProfile(req, res)
       case 'me':
         return await handleMe(req, res)
       case 'touch':
@@ -196,6 +202,49 @@ async function handleChangePassword(req: any, res: any) {
     res.status(200).json({ ok: true })
   } catch {
     res.status(502).json({ error: 'No se pudo actualizar la contraseña en Supabase.' })
+  }
+}
+
+/** action=update-profile — POST, Header: Authorization: Bearer <token>. Body: { name } */
+async function handleUpdateProfile(req: any, res: any) {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Método no permitido.' })
+    return
+  }
+  const env = requiredEnv(res)
+  if (!env) return
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, AUTH_TOKEN_SECRET } = env
+
+  const userId = verifyUserToken(bearerToken(req), AUTH_TOKEN_SECRET)
+  if (!userId) {
+    res.status(401).json({ error: 'No autorizado.' })
+    return
+  }
+
+  const { name } = req.body ?? {}
+  if (typeof name !== 'string') {
+    res.status(400).json({ error: 'Falta el campo name.' })
+    return
+  }
+
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/users?id=eq.${userId}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ name: name.trim() || null }),
+    })
+    if (!resp.ok) {
+      res.status(502).json({ error: `Supabase respondió ${resp.status} al actualizar el perfil.` })
+      return
+    }
+    res.status(200).json({ ok: true })
+  } catch {
+    res.status(502).json({ error: 'No se pudo actualizar el perfil en Supabase.' })
   }
 }
 

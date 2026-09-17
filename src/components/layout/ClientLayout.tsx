@@ -35,7 +35,7 @@ export default function ClientLayout() {
 
   if (session.loading || clientInfo.loading) return <Loading />
 
-  if (!session.user) {
+  if (!session.user || session.user.mustChangePassword) {
     return <Login subtitle="Inicia sesión para ver este informe." />
   }
 

@@ -18,7 +18,9 @@ export default function AdminLayout() {
   const session = useSession()
 
   if (session.loading) return <Loading />
-  if (!session.user) return <Login subtitle="Inicia sesión para entrar al panel de administración." />
+  if (!session.user || session.user.mustChangePassword) {
+    return <Login subtitle="Inicia sesión para entrar al panel de administración." />
+  }
   if (session.user.role !== 'admin') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-base px-4">

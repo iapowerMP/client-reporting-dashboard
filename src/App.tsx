@@ -2,6 +2,7 @@ import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-do
 import ClientLayout from './components/layout/ClientLayout'
 import AdminLayout from './components/layout/AdminLayout'
 import ClientPicker from './pages/ClientPicker'
+import Profile from './pages/Profile'
 import AdminClients from './pages/admin/AdminClients'
 import AdminUsers from './pages/admin/AdminUsers'
 import AdminIncidencias from './pages/admin/AdminIncidencias'
@@ -28,6 +29,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<ClientPicker />} />
+      <Route path="/perfil" element={<Profile />} />
       <Route path="/politica-privacidad" element={<PrivacyPolicy />} />
       <Route path="/eliminacion-datos" element={<DataDeletion />} />
       <Route path="/condiciones-servicio" element={<TermsOfService />} />

@@ -26,6 +26,7 @@ interface SessionContextValue {
   loading: boolean
   login: (email: string, password: string) => Promise<Result>
   changePassword: (newPassword: string) => Promise<Result>
+  updateProfile: (name: string) => Promise<Result>
   logout: () => void
   refresh: () => Promise<void>
   /** Marca un informe como visitado ahora — alimenta el "último uso" de
@@ -114,6 +115,25 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     [refresh],
   )
 
+  const updateProfile = useCallback(
+    async (name: string): Promise<Result> => {
+      try {
+        const resp = await fetch('/api/auth?action=update-profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeaders() },
+          body: JSON.stringify({ name }),
+        })
+        const body = await resp.json().catch(() => ({}))
+        if (!resp.ok) return { ok: false, error: body.error ?? 'No se pudo actualizar el perfil.' }
+        await refresh()
+        return { ok: true }
+      } catch {
+        return { ok: false, error: 'No se pudo actualizar el perfil. Inténtalo de nuevo.' }
+      }
+    },
+    [refresh],
+  )
+
   const logout = useCallback(() => {
     clearToken()
     setUser(null)
@@ -128,7 +148,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <SessionContext.Provider value={{ user, loading, login, changePassword, logout, refresh, touch }}>
+    <SessionContext.Provider value={{ user, loading, login, changePassword, updateProfile, logout, refresh, touch }}>
       {children}
     </SessionContext.Provider>
   )
