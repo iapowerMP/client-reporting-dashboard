@@ -55,7 +55,10 @@ type TikTokService = 'ads' | 'organic'
 
 const STATE_TTL_MS = 10 * 60 * 1000
 const PENDING_TTL_S = 10 * 60
-const ORGANIC_SCOPE = 'user.info.basic,video.list'
+// user.info.stats aporta follower_count/video_count (imprescindible para la
+// serie de "Evolución de seguidores" comparada con Instagram/Facebook/
+// YouTube en el apartado Social) — user.info.basic por sí solo no lo trae.
+const ORGANIC_SCOPE = 'user.info.basic,user.info.stats,video.list'
 
 function isTikTokService(value: unknown): value is TikTokService {
   return value === 'ads' || value === 'organic'

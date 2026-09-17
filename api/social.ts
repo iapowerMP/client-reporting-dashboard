@@ -1,9 +1,13 @@
 /**
  * Vercel Function: GET /api/social?client=<slug>&from&to
  * Lee las métricas diarias de Facebook (facebook_page_daily), Instagram
- * (instagram_daily) y YouTube (youtube_daily) y las agrega en la forma que
- * espera SocialData (src/services/types.ts). TikTok todavía no tiene
- * integración real.
+ * (instagram_daily), YouTube (youtube_daily) y TikTok orgánico (tiktok_daily)
+ * y las agrega en la forma que espera SocialData (src/services/types.ts).
+ *
+ * TikTok: igual que YouTube, es un snapshot diario a nivel de cuenta (la API
+ * pública de TikTok no da histórico día a día) — video_views/likes sumados
+ * son de los vídeos recientes que devuelve video.list en ese momento, no del
+ * histórico completo de la cuenta.
  *
  * Simplificación actual (V1): Instagram/YouTube solo guardan snapshots a
  * nivel de cuenta/canal (sin desglose por publicación). Facebook sí tiene
@@ -144,6 +148,14 @@ interface YoutubeRow {
   video_count: string | number
 }
 
+interface TikTokRow {
+  date: string
+  followers: string | number
+  video_count: string | number
+  video_views: string | number
+  likes: string | number
+}
+
 interface FacebookPostRow {
   post_id: string
   created_time: string | null
@@ -199,7 +211,7 @@ async function handleRequest(req: any, res: any) {
 
   try {
     const sourcesResp = await fetch(
-      `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&platform=in.(facebook,instagram,youtube)&select=platform,external_id`,
+      `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&platform=in.(facebook,instagram,youtube,tiktok-org)&select=platform,external_id`,
       { headers },
     )
     const sourceRows: Array<{ platform: string; external_id: string | null }> = sourcesResp.ok ? await sourcesResp.json() : []
@@ -208,11 +220,13 @@ async function handleRequest(req: any, res: any) {
     const facebookPageId = accountByPlatform.get('facebook') ?? ''
     const instagramId = accountByPlatform.get('instagram') ?? ''
     const youtubeChannelId = accountByPlatform.get('youtube') ?? ''
+    const tiktokOpenId = accountByPlatform.get('tiktok-org') ?? ''
 
-    const [facebookRows, instagramRows, youtubeRows, facebookPosts] = await Promise.all([
+    const [facebookRows, instagramRows, youtubeRows, tiktokRows, facebookPosts] = await Promise.all([
       fetchDaily<FacebookRow>(SUPABASE_URL, headers, 'facebook_page_daily', 'page_id', facebookPageId, client.id, dateFilters),
       fetchDaily<InstagramRow>(SUPABASE_URL, headers, 'instagram_daily', 'ig_user_id', instagramId, client.id, dateFilters),
       fetchDaily<YoutubeRow>(SUPABASE_URL, headers, 'youtube_daily', 'channel_id', youtubeChannelId, client.id, dateFilters),
+      fetchDaily<TikTokRow>(SUPABASE_URL, headers, 'tiktok_daily', 'open_id', tiktokOpenId, client.id, dateFilters),
       fetchFacebookPosts(SUPABASE_URL, headers, facebookPageId, client.id, from, to),
     ])
 
@@ -276,7 +290,24 @@ async function handleRequest(req: any, res: any) {
       })
     }
 
-    // --- Evolución de seguidores (serie combinada, TikTok siempre en 0) ---
+    if (tiktokRows.length) {
+      const last = tiktokRows[tiktokRows.length - 1]
+      const videoViews = Number(last.video_views)
+      const likes = Number(last.likes)
+      stats.push({
+        platform: 'TikTok',
+        seguidores: Number(last.followers),
+        crecimientoNeto: Number(last.followers) - Number(tiktokRows[0].followers),
+        alcance: 0,
+        impresiones: videoViews,
+        engagementRate: videoViews ? round2((likes / videoViews) * 100) : 0,
+        publicaciones: Number(last.video_count),
+        videoViews,
+        compartidos: 0,
+      })
+    }
+
+    // --- Evolución de seguidores (serie combinada) ---
     const followersByDate = new Map<string, { Instagram: number; Facebook: number; TikTok: number; YouTube: number }>()
     const ensureDate = (date: string) => {
       const label = formatDateLabel(date)
@@ -286,8 +317,14 @@ async function handleRequest(req: any, res: any) {
     for (const r of facebookRows) ensureDate(r.date).Facebook = Number(r.followers)
     for (const r of instagramRows) ensureDate(r.date).Instagram = Number(r.followers)
     for (const r of youtubeRows) ensureDate(r.date).YouTube = Number(r.subscribers)
+    for (const r of tiktokRows) ensureDate(r.date).TikTok = Number(r.followers)
     const allDates = Array.from(
-      new Set([...facebookRows.map((r) => r.date), ...instagramRows.map((r) => r.date), ...youtubeRows.map((r) => r.date)]),
+      new Set([
+        ...facebookRows.map((r) => r.date),
+        ...instagramRows.map((r) => r.date),
+        ...youtubeRows.map((r) => r.date),
+        ...tiktokRows.map((r) => r.date),
+      ]),
     ).sort()
     const followers = allDates.map((date) => ({ date: formatDateLabel(date), ...followersByDate.get(formatDateLabel(date))! }))
 

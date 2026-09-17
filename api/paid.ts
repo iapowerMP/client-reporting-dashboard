@@ -1,9 +1,9 @@
 /**
  * Vercel Function: GET /api/paid?client=<slug>&from&to
  * Lee las métricas diarias de cada plataforma de paid media conectada
- * (Google Ads: tabla gads_campaign_daily; Meta Ads: tabla meta_campaign_daily)
- * y las agrega en la forma que espera PaidData (src/services/types.ts).
- * TikTok Ads se añadirá del mismo modo cuando tenga su propia tabla/integración.
+ * (Google Ads: tabla gads_campaign_daily; Meta Ads: tabla meta_campaign_daily;
+ * TikTok Ads: tabla tiktok_campaign_daily) y las agrega en la forma que
+ * espera PaidData (src/services/types.ts).
  *
  * invConv/invConvByPlatform incluyen `ingresos` (conversions_value sumado)
  * además de inversion/conversiones, para poder pintar una línea de ROAS
@@ -128,7 +128,7 @@ interface AdRow {
   frequency: string | number
 }
 
-type PlatformName = 'Google Ads' | 'Meta Ads'
+type PlatformName = 'Google Ads' | 'Meta Ads' | 'TikTok Ads'
 
 /** Una fuente de paid media = su tabla y la columna que identifica la cuenta
  * (para ignorar datos de una cuenta anterior si el cliente cambia de ID). */
@@ -140,6 +140,7 @@ const PAID_SOURCES: Array<{
 }> = [
   { platform: 'Google Ads', dataSourcePlatform: 'google-ads', table: 'gads_campaign_daily', accountColumn: 'customer_id' },
   { platform: 'Meta Ads', dataSourcePlatform: 'meta-ads', table: 'meta_campaign_daily', accountColumn: 'ad_account_id' },
+  { platform: 'TikTok Ads', dataSourcePlatform: 'tiktok-ads', table: 'tiktok_campaign_daily', accountColumn: 'advertiser_id' },
 ]
 
 const round2 = (n: number) => Math.round(n * 100) / 100

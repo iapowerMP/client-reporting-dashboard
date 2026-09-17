@@ -485,3 +485,60 @@ alter table sync_logs add column if not exists error_message text;
 -- creados antes de que existieran cuentas de usuario, o si se borra la
 -- cuenta que lo creó — el frontend lo muestra como "Admin" en ese caso.
 alter table clients add column if not exists created_by uuid references users(id) on delete set null;
+
+-- ----------------------------------------------------------------------------
+--  TikTok Ads — métricas diarias por campaña. Misma forma que
+--  meta_campaign_daily/gads_campaign_daily; advertiser_id permite ignorar
+--  datos de una cuenta anterior si el cliente cambia de Advertiser ID.
+--  Alimentada por report/integrated/get/ de la TikTok Business API (login
+--  con la app de Ads, ver api/oauth-tiktok.ts) — a diferencia de Meta/Google,
+--  el access_token de esa app no caduca por sí solo, así que no hay
+--  auth_method 'api' con credencial compartida, solo 'oauth' por cliente.
+-- ----------------------------------------------------------------------------
+create table if not exists tiktok_campaign_daily (
+  id                 bigint generated always as identity primary key,
+  client_id          uuid not null references clients(id) on delete cascade,
+  advertiser_id      text,                    -- cuenta de TikTok Ads que originó la fila
+  date               date not null,
+  campaign_id        text not null,
+  campaign_name      text not null,
+  status             text,                    -- 'Activa' | 'Pausada'
+  cost               numeric(14,2) not null default 0,   -- €
+  impressions        bigint not null default 0,
+  clicks             bigint not null default 0,
+  conversions        numeric(14,2) not null default 0,
+  conversions_value  numeric(14,2) not null default 0,   -- valor de conversión (para ROAS)
+  updated_at         timestamptz not null default now(),
+  unique (client_id, date, campaign_id)
+);
+
+create index if not exists idx_tiktok_campaign_daily_client_date
+  on tiktok_campaign_daily (client_id, date);
+
+-- ----------------------------------------------------------------------------
+--  TikTok orgánico — snapshot diario a nivel de cuenta, mismo patrón que
+--  youtube_daily: la API pública de TikTok (Login Kit, scope
+--  user.info.stats + video.list) no da históricos día a día, solo el estado
+--  actual de la cuenta y una lista de vídeos — así que cada fila es "así
+--  estaba la cuenta este día", no un delta real del día.
+--  video_views/likes/comments/shares se calculan sumando los vídeos
+--  devueltos por video.list en ese momento (los más recientes; TikTok limita
+--  cuántos trae por página) — una aproximación honesta al "reciente", no el
+--  histórico completo de la cuenta, igual que el aviso ya existente sobre
+--  facebook_posts en api/social.ts.
+-- ----------------------------------------------------------------------------
+create table if not exists tiktok_daily (
+  id            bigint generated always as identity primary key,
+  client_id     uuid not null references clients(id) on delete cascade,
+  open_id       text,                    -- cuenta de TikTok que originó la fila
+  date          date not null,
+  followers     bigint not null default 0,   -- follower_count (snapshot)
+  video_count   bigint not null default 0,   -- video_count (snapshot)
+  video_views   bigint not null default 0,   -- suma de view_count de los vídeos recientes traídos por video.list
+  likes         bigint not null default 0,   -- suma de like_count de esos mismos vídeos
+  updated_at    timestamptz not null default now(),
+  unique (client_id, date)
+);
+
+create index if not exists idx_tiktok_daily_client_date
+  on tiktok_daily (client_id, date);
