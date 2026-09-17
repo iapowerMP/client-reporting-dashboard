@@ -73,6 +73,8 @@ const SYNC_WEBHOOKS: Record<string, string | undefined> = {
   facebook: process.env.N8N_FACEBOOK_SYNC_WEBHOOK_URL,
   instagram: process.env.N8N_INSTAGRAM_SYNC_WEBHOOK_URL,
   youtube: process.env.N8N_YOUTUBE_SYNC_WEBHOOK_URL,
+  'tiktok-ads': process.env.N8N_TIKTOK_ADS_SYNC_WEBHOOK_URL,
+  'tiktok-org': process.env.N8N_TIKTOK_ORG_SYNC_WEBHOOK_URL,
 }
 
 /** Webhooks adicionales que se disparan junto al de su plataforma (mismo
