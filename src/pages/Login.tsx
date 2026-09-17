@@ -119,6 +119,14 @@ export default function Login({ subtitle }: { subtitle?: string }) {
         >
           {loading ? 'Entrando...' : 'Entrar'}
         </button>
+        <p className="mt-4 text-xs text-text-secondary">
+          Hemos pasado a acceso por cuenta de usuario: si antes entrabas con una contraseña
+          compartida y ya no funciona, o todavía no tienes cuenta, escribe a{' '}
+          <a href="mailto:javier.g@themediapower.com" className="text-accent hover:underline">
+            javier.g@themediapower.com
+          </a>{' '}
+          para que te la creen.
+        </p>
       </form>
     </div>
   )

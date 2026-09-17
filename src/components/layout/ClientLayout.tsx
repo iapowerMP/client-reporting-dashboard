@@ -44,7 +44,7 @@ export default function ClientLayout() {
   if (!hasAccess) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-base px-4">
-        <ErrorState message="No tienes acceso a este informe. Contacta con tu Project Manager si crees que es un error." />
+        <ErrorState message="No tienes acceso a este informe. Si antes lo veías con una contraseña compartida, ese acceso se ha eliminado: escribe a javier.g@themediapower.com para que te den de alta." />
       </div>
     )
   }
