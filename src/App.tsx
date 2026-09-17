@@ -1,4 +1,4 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import ClientLayout from './components/layout/ClientLayout'
 import AdminLayout from './components/layout/AdminLayout'
 import ClientPicker from './pages/ClientPicker'
@@ -16,6 +16,14 @@ import PrivacyPolicy from './pages/PrivacyPolicy'
 import DataDeletion from './pages/DataDeletion'
 import TermsOfService from './pages/TermsOfService'
 
+/** Enlaces antiguos guardados con el prefijo /c/ (eliminado): redirige a la
+ * misma ruta sin el prefijo, conservando el resto del path y la query. */
+function LegacyClientRedirect() {
+  const { clientSlug, '*': rest } = useParams<{ clientSlug: string; '*': string }>()
+  const { search } = useLocation()
+  return <Navigate to={`/${clientSlug}${rest ? `/${rest}` : ''}${search}`} replace />
+}
+
 export default function App() {
   return (
     <Routes>
@@ -29,6 +37,7 @@ export default function App() {
         <Route path="incidencias" element={<AdminIncidencias />} />
         <Route path="monitorizacion" element={<AdminMonitorizacion />} />
       </Route>
+      <Route path="/c/:clientSlug/*" element={<LegacyClientRedirect />} />
       <Route path="/:clientSlug" element={<ClientLayout />}>
         <Route index element={<Overview />} />
         <Route path="paid" element={<PaidMedia />} />
