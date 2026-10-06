@@ -726,6 +726,78 @@ export interface FacebookPostCard {
 }
 
 /* ========================================================================== */
+/*  VISTA 2c · NEGOCIO (HubSpot: pipeline + coste de adquisición por UTM)      */
+/* ========================================================================== */
+
+/** Mapea la (única) pestaña de Negocio con su conexión en Configuración —
+ * mismo patrón que SOCIAL_TAB_TO_CONNECTION, usado por Sidebar para decidir
+ * si se muestra el apartado. */
+export const BUSINESS_TAB_TO_CONNECTION: Record<string, string> = {
+  HubSpot: 'hubspot',
+}
+
+/** Etapa del pipeline de HubSpot con su recuento e importe (rango de
+ * fechas activo, por fecha de creación del deal). */
+export interface PipelineStageRow {
+  stage: string
+  count: number
+  amount: number
+}
+
+/** Fila de coste de adquisición cruzando contactos de HubSpot (por
+ * utm_campaign) con el gasto real de la plataforma de pago cuyo nombre de
+ * campaña coincide. `platform` es null en "Sin campaña de pago asociada"
+ * (utm_campaign sin coincidencia conocida en el rango) — ahí `inversion`
+ * es 0 y `cpa` null a propósito: no hay una base honesta para calcularlo. */
+export interface CampaignCpaRow {
+  campaign: string
+  platform: Extract<Platform, 'Google Ads' | 'Meta Ads'> | null
+  inversion: number
+  contactos: number
+  cpa: number | null
+  deals: number
+  dealsGanados: number
+  importeGanado: number
+}
+
+/** Igual que CampaignCpaRow pero a nivel de anuncio de Meta Ads (cruzando
+ * utm_content con meta_ad_daily.ad_id) — más preciso que por campaña
+ * cuando hay varios anuncios activos en la misma campaña. */
+export interface AdCpaRow {
+  adId: string
+  adName: string
+  thumbnailUrl: string | null
+  inversion: number
+  contactos: number
+  cpa: number | null
+  deals: number
+  dealsGanados: number
+  importeGanado: number
+}
+
+/** KPIs de cabecera de la pestaña Negocio. */
+export function computeNegocioKpis(data: {
+  totalContactos: number
+  dealsAbiertos: number
+  dealsGanados: number
+  importeAbierto: number
+  importeGanado: number
+  tasaCierre: number | null
+}): KpiData[] {
+  return [
+    { label: 'Contactos', value: formatNumber(data.totalContactos) },
+    { label: 'Deals abiertos', value: formatNumber(data.dealsAbiertos) },
+    { label: 'Deals ganados', value: formatNumber(data.dealsGanados) },
+    { label: 'Importe en pipeline', value: formatCurrency(data.importeAbierto) },
+    { label: 'Importe ganado', value: formatCurrency(data.importeGanado) },
+    {
+      label: 'Tasa de cierre',
+      value: data.tasaCierre === null ? '—' : formatPercent(data.tasaCierre),
+    },
+  ]
+}
+
+/* ========================================================================== */
 /*  VISTA 5 · CONFIGURACIÓN                                                    */
 /* ========================================================================== */
 
@@ -750,4 +822,5 @@ export const CONNECTION_CATALOG: ConnectionCatalogEntry[] = [
   { id: 'facebook', platform: 'Facebook', label: 'Page ID', placeholder: 'XXXXXXXXXX' },
   { id: 'tiktok-org', platform: 'TikTok (orgánico)', label: 'Username', placeholder: '@tuusuario' },
   { id: 'youtube', platform: 'YouTube', label: 'Channel ID', placeholder: 'UCXXXXXXXXXX' },
+  { id: 'hubspot', platform: 'HubSpot CRM', label: 'Private App Token', placeholder: 'pat-eu1-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' },
 ]

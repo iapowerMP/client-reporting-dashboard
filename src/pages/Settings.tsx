@@ -26,6 +26,7 @@ const BUILT_INTEGRATIONS = new Set([
   'youtube',
   'tiktok-ads',
   'tiktok-org',
+  'hubspot',
 ])
 
 /** Plataformas que, además de la conexión manual por API, admiten "iniciar
@@ -190,7 +191,13 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
         loginProvider,
       }
     }
-    if (value) {
+    // "Conectado" se decide por `status` (no por `value`/external_id): HubSpot
+    // no tiene identificador de cuenta, su credencial es un Private App Token
+    // que se guarda en oauth_access_token, nunca en external_id. Para el resto
+    // de plataformas `status` y `value` ya estaban siempre sincronizados (el
+    // POST de data-sources.ts fija status='conectado' a la vez que el valor),
+    // así que este cambio no altera su comportamiento.
+    if (row?.status === 'conectado') {
       const via = authMethod === 'oauth' ? ` · conectado con inicio de sesión de ${loginProvider}` : ''
       return {
         ...entry,
@@ -210,7 +217,9 @@ function buildRealConnections(sources: DataSourceRow[]): RealConnection[] {
       status: 'Pendiente',
       statusNote: oauthOnly
         ? 'Inicia sesión para activar la sincronización.'
-        : 'Guarda el identificador de la cuenta para activar la sincronización.',
+        : entry.id === 'hubspot'
+          ? 'Pega el Private App Token para activar la sincronización.'
+          : 'Guarda el identificador de la cuenta para activar la sincronización.',
       canSync: false,
       oauthCapable,
       oauthOnly,
@@ -383,7 +392,7 @@ function Field({
   defaultValue?: string | number
   placeholder?: string
   inputRef?: React.RefObject<HTMLInputElement>
-  type?: 'text' | 'number'
+  type?: 'text' | 'number' | 'password'
   step?: string
   hint?: string
 }) {
@@ -448,6 +457,12 @@ function ConnectionCard({
               defaultValue={conn.value}
               placeholder={conn.placeholder}
               inputRef={inputRef}
+              type={conn.id === 'hubspot' ? 'password' : 'text'}
+              hint={
+                conn.id === 'hubspot' && conn.status === 'Conectado'
+                  ? 'Ya hay un token guardado — pega uno nuevo solo para sustituirlo.'
+                  : undefined
+              }
             />
           </div>
 

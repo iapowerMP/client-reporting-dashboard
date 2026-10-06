@@ -16,6 +16,9 @@ import type {
   ProgrammaticCampaignRow,
   ProgrammaticMediumRow,
   ProgrammaticCreativeRow,
+  PipelineStageRow,
+  CampaignCpaRow,
+  AdCpaRow,
   KpiData,
   SeoTrafficPoint,
   ChannelBar,
@@ -64,6 +67,25 @@ export interface ProgrammaticData {
   creatives: ProgrammaticCreativeRow[]
 }
 
+/** Pestaña "Negocio": pipeline de HubSpot + coste de adquisición cruzando
+ * contactos por UTM con el gasto real de Google Ads/Meta Ads. `connected:
+ * false` cuando el cliente no tiene HubSpot conectado — todo lo demás llega
+ * vacío (sin inventar ceros con significado, el frontend debe mostrar un
+ * estado de "conecta HubSpot" en vez de un dashboard vacío engañoso). */
+export interface NegocioData {
+  connected: boolean
+  totalContactos: number
+  dealsAbiertos: number
+  dealsGanados: number
+  dealsPerdidos: number
+  importeAbierto: number
+  importeGanado: number
+  tasaCierre: number | null
+  pipeline: PipelineStageRow[]
+  byCampaign: CampaignCpaRow[]
+  byAd: AdCpaRow[]
+}
+
 export interface SeoData {
   /** Vista combinada de "Overview" (todas las herramientas conectadas). */
   kpis: KpiData[]
@@ -106,6 +128,7 @@ export interface DataProvider {
   getOverview(client: string, range: DateRange): Promise<OverviewData>
   getPaid(client: string, range: DateRange): Promise<PaidData>
   getProgrammatic(client: string, range: DateRange): Promise<ProgrammaticData>
+  getNegocio(client: string, range: DateRange): Promise<NegocioData>
   getSeo(client: string, range: DateRange): Promise<SeoData>
   getSocial(client: string, range: DateRange): Promise<SocialData>
 }

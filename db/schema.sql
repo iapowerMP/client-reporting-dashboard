@@ -542,3 +542,65 @@ create table if not exists tiktok_daily (
 
 create index if not exists idx_tiktok_daily_client_date
   on tiktok_daily (client_id, date);
+
+-- ----------------------------------------------------------------------------
+--  HubSpot CRM — pestaña "Negocio" (pipeline + coste de adquisición por UTM).
+--  auth_method = 'private-app': un Private App Token de HubSpot (generado a
+--  mano en la propia cuenta, sin app OAuth ni revisión), guardado en
+--  data_sources.oauth_access_token (external_id no aplica aquí).
+--
+--  utm_content guarda el ID del anuncio (confirmado con Meta Ads: mismo
+--  formato que meta_ad_daily.ad_id), lo que permite cruzar a nivel de
+--  anuncio además de por nombre de campaña (utm_campaign = nombre exacto de
+--  campaña en la plataforma de pago).
+--
+--  stage_label/stage_order/is_closed/is_won ya vienen resueltos desde el
+--  pipeline de HubSpot en el propio workflow de n8n (no hay tabla de
+--  referencia de stages, igual que programmatic_daily desnormaliza en vez
+--  de normalizar).
+-- ----------------------------------------------------------------------------
+create table if not exists hubspot_contacts (
+  id                  bigint generated always as identity primary key,
+  client_id           uuid not null references clients(id) on delete cascade,
+  hubspot_contact_id  text not null,
+  email               text,
+  created_at          timestamptz,             -- createdate de HubSpot
+  lifecycle_stage     text,
+  utm_campaign        text,
+  utm_source          text,
+  utm_medium          text,
+  utm_content         text,                    -- ID del anuncio (Meta: ad_id)
+  utm_term            text,
+  updated_at          timestamptz not null default now(),
+  unique (client_id, hubspot_contact_id)
+);
+
+create index if not exists idx_hubspot_contacts_client_created
+  on hubspot_contacts (client_id, created_at);
+create index if not exists idx_hubspot_contacts_client_campaign
+  on hubspot_contacts (client_id, utm_campaign);
+create index if not exists idx_hubspot_contacts_client_content
+  on hubspot_contacts (client_id, utm_content);
+
+create table if not exists hubspot_deals (
+  id                  bigint generated always as identity primary key,
+  client_id           uuid not null references clients(id) on delete cascade,
+  hubspot_deal_id     text not null,
+  name                text,
+  pipeline_label      text,
+  stage_label         text,
+  stage_order         integer,
+  is_closed           boolean not null default false,
+  is_won              boolean not null default false,
+  amount              numeric(14,2) not null default 0,
+  create_date         timestamptz,
+  close_date          timestamptz,
+  primary_contact_id  text,                    -- hubspot_contact_id del contacto asociado principal
+  updated_at          timestamptz not null default now(),
+  unique (client_id, hubspot_deal_id)
+);
+
+create index if not exists idx_hubspot_deals_client_create
+  on hubspot_deals (client_id, create_date);
+create index if not exists idx_hubspot_deals_client_contact
+  on hubspot_deals (client_id, primary_contact_id);

@@ -10,6 +10,7 @@ import AdminMonitorizacion from './pages/admin/AdminMonitorizacion'
 import Overview from './pages/Overview'
 import PaidMedia from './pages/PaidMedia'
 import Programmatic from './pages/Programmatic'
+import Negocio from './pages/Negocio'
 import Seo from './pages/Seo'
 import Social from './pages/Social'
 import Settings from './pages/Settings'
@@ -44,6 +45,7 @@ export default function App() {
         <Route index element={<Overview />} />
         <Route path="paid" element={<PaidMedia />} />
         <Route path="programatica" element={<Programmatic />} />
+        <Route path="negocio" element={<Negocio />} />
         <Route path="seo" element={<Seo />} />
         <Route path="social" element={<Social />} />
         <Route path="settings" element={<Settings />} />

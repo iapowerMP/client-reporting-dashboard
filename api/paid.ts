@@ -20,6 +20,13 @@
  * vez de en /api/programmatic.ts) para no superar el límite de Serverless
  * Functions del plan de Vercel — mismo motivo que /api/oauth-facebook.ts.
  *
+ * GET ?client=<slug>&mode=negocio&from&to -> pestaña "Negocio": pipeline de
+ * HubSpot (`hubspot_deals`) y coste de adquisición cruzando los contactos
+ * de HubSpot (`hubspot_contacts`) con el gasto real de Google Ads/Meta Ads
+ * por nombre de campaña (utm_campaign) y, en Meta Ads, por anuncio
+ * (utm_content = ad_id de meta_ad_daily). Vive aquí por el mismo motivo que
+ * `mode=programmatic` — no hay api/hubspot.ts ni api/business.ts.
+ *
  * El deployment es compartido por todos los clientes: el cliente se resuelve
  * en cada petición a partir del slug de la URL (?client=), no de una variable
  * de entorno fija.
@@ -154,6 +161,8 @@ export default async function handler(req: any, res: any) {
   try {
     if (req.query?.mode === 'programmatic') {
       await handleProgrammaticRequest(req, res)
+    } else if (req.query?.mode === 'negocio') {
+      await handleNegocioRequest(req, res)
     } else {
       await handleRequest(req, res)
     }
@@ -604,5 +613,376 @@ async function handleProgrammaticRequest(req: any, res: any) {
     })
   } catch (e) {
     res.status(502).json({ error: (e as Error).message || 'No se pudo leer publicidad programática desde Supabase.' })
+  }
+}
+
+/* ============================================================================
+ *  mode=negocio — HubSpot: pipeline + coste de adquisición por UTM
+ * ========================================================================== */
+
+interface HubspotContactRow {
+  hubspot_contact_id: string
+  utm_campaign: string | null
+  utm_content: string | null
+}
+
+interface HubspotDealRow {
+  stage_label: string | null
+  stage_order: number | null
+  is_closed: boolean
+  is_won: boolean
+  amount: string | number
+  primary_contact_id: string | null
+}
+
+/** Mismo par Google Ads/Meta Ads de PAID_SOURCES, sin TikTok Ads (no pedido
+ * para el cruce de coste de adquisición — y sin tabla de nivel-anuncio con
+ * la que cruzar utm_content, a diferencia de Meta). */
+const NEGOCIO_PAID_SOURCES: Array<{ platform: 'Google Ads' | 'Meta Ads'; dataSourcePlatform: string; table: string; accountColumn: string }> = [
+  { platform: 'Google Ads', dataSourcePlatform: 'google-ads', table: 'gads_campaign_daily', accountColumn: 'customer_id' },
+  { platform: 'Meta Ads', dataSourcePlatform: 'meta-ads', table: 'meta_campaign_daily', accountColumn: 'ad_account_id' },
+]
+
+async function handleNegocioRequest(req: any, res: any) {
+  const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    res.status(500).json({
+      error: 'Faltan variables de entorno en el servidor (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).',
+    })
+    return
+  }
+
+  const slug = typeof req.query?.client === 'string' ? req.query.client : ''
+  if (!slug) {
+    res.status(400).json({ error: 'Falta el parámetro client en la petición.' })
+    return
+  }
+
+  let client: { id: string } | null
+  try {
+    client = await resolveClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+  } catch (e) {
+    res.status(502).json({ error: `No se pudo resolver el cliente: ${(e as Error).message}` })
+    return
+  }
+  if (!client) {
+    res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+    return
+  }
+  if (!(await checkAccess(req, client.id, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY))) {
+    res.status(401).json({ error: 'No tienes acceso a este informe. Inicia sesión de nuevo.' })
+    return
+  }
+
+  const from = typeof req.query?.from === 'string' ? req.query.from : ''
+  const to = typeof req.query?.to === 'string' ? req.query.to : ''
+  const headers = {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+  }
+
+  const EMPTY = {
+    connected: false,
+    totalContactos: 0,
+    dealsAbiertos: 0,
+    dealsGanados: 0,
+    dealsPerdidos: 0,
+    importeAbierto: 0,
+    importeGanado: 0,
+    tasaCierre: null as number | null,
+    pipeline: [] as Array<{ stage: string; count: number; amount: number }>,
+    byCampaign: [] as Array<{
+      campaign: string
+      platform: 'Google Ads' | 'Meta Ads' | null
+      inversion: number
+      contactos: number
+      cpa: number | null
+      deals: number
+      dealsGanados: number
+      importeGanado: number
+    }>,
+    byAd: [] as Array<{
+      adId: string
+      adName: string
+      thumbnailUrl: string | null
+      inversion: number
+      contactos: number
+      cpa: number | null
+      deals: number
+      dealsGanados: number
+      importeGanado: number
+    }>,
+  }
+
+  try {
+    const sourcesResp = await fetch(
+      `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&platform=in.(hubspot,google-ads,meta-ads)&select=platform,external_id,status`,
+      { headers },
+    )
+    const sourceRows: Array<{ platform: string; external_id: string | null; status: string }> = sourcesResp.ok
+      ? await sourcesResp.json()
+      : []
+    if (!sourceRows.some((s) => s.platform === 'hubspot' && s.status === 'conectado')) {
+      res.status(200).json(EMPTY)
+      return
+    }
+    const accountByPlatform = new Map(sourceRows.map((s) => [s.platform, s.external_id?.trim() ?? '']))
+
+    // Igual que el resto de consultas por rango de este fichero, pero contra
+    // columnas timestamptz (created_at/create_date) en vez de date: se acota
+    // el día completo (00:00:00–23:59:59) en vez de comparar solo la fecha.
+    const dateFilters = (col: string): Array<[string, string]> => {
+      const parts: Array<[string, string]> = []
+      if (/^\d{4}-\d{2}-\d{2}$/.test(from)) parts.push([col, `gte.${from}T00:00:00`])
+      if (/^\d{4}-\d{2}-\d{2}$/.test(to)) parts.push([col, `lte.${to}T23:59:59`])
+      return parts
+    }
+
+    const contactsQuery = new URLSearchParams({ client_id: `eq.${client.id}` })
+    dateFilters('created_at').forEach(([k, v]) => contactsQuery.append(k, v))
+    const contacts = await fetchAllRows<HubspotContactRow>(
+      `${SUPABASE_URL}/rest/v1/hubspot_contacts?${contactsQuery.toString()}`,
+      headers,
+      'hubspot_contacts',
+    )
+
+    const dealsQuery = new URLSearchParams({ client_id: `eq.${client.id}` })
+    dateFilters('create_date').forEach(([k, v]) => dealsQuery.append(k, v))
+    const deals = await fetchAllRows<HubspotDealRow>(
+      `${SUPABASE_URL}/rest/v1/hubspot_deals?${dealsQuery.toString()}`,
+      headers,
+      'hubspot_deals',
+    )
+
+    // El contacto asociado a un deal puede haberse creado fuera del rango de
+    // fechas del informe (el deal es posterior) — para atribuir el deal a su
+    // campaña/anuncio hace falta su utm igualmente, así que se resuelve
+    // aparte de `contacts` (que sí respeta el rango, para "Contactos").
+    const contactUtmById = new Map<string, { utm_campaign: string | null; utm_content: string | null }>()
+    for (const c of contacts) contactUtmById.set(c.hubspot_contact_id, { utm_campaign: c.utm_campaign, utm_content: c.utm_content })
+    const missingIds = Array.from(
+      new Set(deals.map((d) => d.primary_contact_id).filter((id): id is string => !!id && !contactUtmById.has(id))),
+    )
+    const CHUNK = 100
+    for (let i = 0; i < missingIds.length; i += CHUNK) {
+      const chunk = missingIds.slice(i, i + CHUNK)
+      const idsFilter = chunk.map((id) => encodeURIComponent(id)).join(',')
+      const resp = await fetch(
+        `${SUPABASE_URL}/rest/v1/hubspot_contacts?client_id=eq.${client.id}&hubspot_contact_id=in.(${idsFilter})&select=hubspot_contact_id,utm_campaign,utm_content`,
+        { headers },
+      )
+      if (!resp.ok) continue
+      const rows: Array<{ hubspot_contact_id: string; utm_campaign: string | null; utm_content: string | null }> = await resp.json()
+      for (const r of rows) contactUtmById.set(r.hubspot_contact_id, { utm_campaign: r.utm_campaign, utm_content: r.utm_content })
+    }
+
+    // --- Coste real por campaña (Google Ads + Meta Ads) y por anuncio (Meta) ---
+    const campaignCost = new Map<'Google Ads' | 'Meta Ads', Map<string, number>>([
+      ['Google Ads', new Map()],
+      ['Meta Ads', new Map()],
+    ])
+    await Promise.all(
+      NEGOCIO_PAID_SOURCES.map(async (source) => {
+        const accountId = accountByPlatform.get(source.dataSourcePlatform) ?? ''
+        if (!accountId) return
+        const query = new URLSearchParams({ client_id: `eq.${client.id}` })
+        query.set(source.accountColumn, `eq.${accountId}`)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
+        if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
+        const rows = await fetchAllRows<CampaignRow>(`${SUPABASE_URL}/rest/v1/${source.table}?${query.toString()}`, headers, source.table)
+        const byName = campaignCost.get(source.platform)!
+        for (const r of rows) byName.set(r.campaign_name, (byName.get(r.campaign_name) ?? 0) + Number(r.cost))
+      }),
+    )
+
+    const adCost = new Map<string, { adName: string; thumbnailUrl: string | null; cost: number }>()
+    const metaAccountId = accountByPlatform.get('meta-ads') ?? ''
+    if (metaAccountId) {
+      const query = new URLSearchParams({ client_id: `eq.${client.id}`, ad_account_id: `eq.${metaAccountId}` })
+      if (/^\d{4}-\d{2}-\d{2}$/.test(from)) query.append('date', `gte.${from}`)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
+      const rows = await fetchAllRows<AdRow>(`${SUPABASE_URL}/rest/v1/meta_ad_daily?${query.toString()}`, headers, 'meta_ad_daily')
+      for (const r of rows) {
+        const cur = adCost.get(r.ad_id) ?? { adName: r.ad_name, thumbnailUrl: null, cost: 0 }
+        cur.adName = r.ad_name
+        cur.cost += Number(r.cost)
+        if (r.thumbnail_url) cur.thumbnailUrl = r.thumbnail_url
+        adCost.set(r.ad_id, cur)
+      }
+    }
+
+    // --- Pipeline ---
+    const pipelineMap = new Map<string, { stage: string; order: number; count: number; amount: number }>()
+    let dealsAbiertos = 0
+    let dealsGanados = 0
+    let dealsPerdidos = 0
+    let importeAbierto = 0
+    let importeGanado = 0
+    for (const d of deals) {
+      const stage = d.stage_label || 'Sin etapa'
+      const entry = pipelineMap.get(stage) ?? { stage, order: d.stage_order ?? 999, count: 0, amount: 0 }
+      entry.count += 1
+      entry.amount += Number(d.amount)
+      pipelineMap.set(stage, entry)
+
+      const amount = Number(d.amount)
+      if (!d.is_closed) {
+        dealsAbiertos += 1
+        importeAbierto += amount
+      } else if (d.is_won) {
+        dealsGanados += 1
+        importeGanado += amount
+      } else {
+        dealsPerdidos += 1
+      }
+    }
+    const pipeline = Array.from(pipelineMap.values())
+      .sort((a, b) => a.order - b.order)
+      .map((s) => ({ stage: s.stage, count: s.count, amount: round2(s.amount) }))
+    const tasaCierre = dealsGanados + dealsPerdidos ? round2((dealsGanados / (dealsGanados + dealsPerdidos)) * 100) : null
+
+    // --- Coste de adquisición por campaña (utm_campaign = nombre exacto) ---
+    type CampaignBucket = {
+      campaign: string
+      platform: 'Google Ads' | 'Meta Ads' | null
+      inversion: number
+      contactos: number
+      deals: number
+      dealsGanados: number
+      importeGanado: number
+    }
+    const campaignBuckets = new Map<string, CampaignBucket>()
+    const matchingPlatforms = (name: string): Array<'Google Ads' | 'Meta Ads'> => {
+      const out: Array<'Google Ads' | 'Meta Ads'> = []
+      for (const [platform, byName] of campaignCost) if (byName.has(name)) out.push(platform)
+      return out
+    }
+    // Si el mismo nombre de campaña existe a la vez en Google Ads y Meta Ads
+    // (coincidencia infrecuente), se genera una fila por plataforma, cada una
+    // con el contacto/deal completo — no hay más señal que el nombre para
+    // saber de cuál vino exactamente. Si no coincide con ninguna, cae en una
+    // única fila "platform: null" ("Sin campaña de pago asociada").
+    const getCampaignBucket = (name: string, platform: 'Google Ads' | 'Meta Ads' | null): CampaignBucket => {
+      const key = `${name}::${platform ?? 'none'}`
+      let b = campaignBuckets.get(key)
+      if (!b) {
+        b = {
+          campaign: name,
+          platform,
+          inversion: platform ? campaignCost.get(platform)!.get(name) ?? 0 : 0,
+          contactos: 0,
+          deals: 0,
+          dealsGanados: 0,
+          importeGanado: 0,
+        }
+        campaignBuckets.set(key, b)
+      }
+      return b
+    }
+    for (const c of contacts) {
+      if (!c.utm_campaign) continue
+      const platforms = matchingPlatforms(c.utm_campaign)
+      const targets = platforms.length ? platforms : [null]
+      for (const p of targets) getCampaignBucket(c.utm_campaign, p).contactos += 1
+    }
+    for (const d of deals) {
+      const contact = d.primary_contact_id ? contactUtmById.get(d.primary_contact_id) : undefined
+      const name = contact?.utm_campaign
+      if (!name) continue
+      const platforms = matchingPlatforms(name)
+      const targets = platforms.length ? platforms : [null]
+      const amount = Number(d.amount)
+      for (const p of targets) {
+        const b = getCampaignBucket(name, p)
+        b.deals += 1
+        if (d.is_won) {
+          b.dealsGanados += 1
+          b.importeGanado += amount
+        }
+      }
+    }
+    const byCampaign = Array.from(campaignBuckets.values())
+      .map((b) => ({
+        campaign: b.campaign,
+        platform: b.platform,
+        inversion: round2(b.inversion),
+        contactos: b.contactos,
+        cpa: b.inversion && b.contactos ? round2(b.inversion / b.contactos) : null,
+        deals: b.deals,
+        dealsGanados: b.dealsGanados,
+        importeGanado: round2(b.importeGanado),
+      }))
+      .sort((a, b) => b.inversion - a.inversion)
+
+    // --- Coste de adquisición por anuncio (utm_content = ad_id, solo Meta
+    //     Ads: es la única plataforma con datos de coste a nivel de anuncio
+    //     ya ingeridos, en meta_ad_daily) ---
+    type AdBucket = {
+      adId: string
+      adName: string
+      thumbnailUrl: string | null
+      inversion: number
+      contactos: number
+      deals: number
+      dealsGanados: number
+      importeGanado: number
+    }
+    const adBuckets = new Map<string, AdBucket>()
+    const getAdBucket = (adId: string): AdBucket | null => {
+      const ad = adCost.get(adId)
+      if (!ad) return null // utm_content no coincide con ningún ad_id de Meta en este rango
+      let b = adBuckets.get(adId)
+      if (!b) {
+        b = { adId, adName: ad.adName, thumbnailUrl: ad.thumbnailUrl, inversion: ad.cost, contactos: 0, deals: 0, dealsGanados: 0, importeGanado: 0 }
+        adBuckets.set(adId, b)
+      }
+      return b
+    }
+    for (const c of contacts) {
+      if (!c.utm_content) continue
+      const b = getAdBucket(c.utm_content)
+      if (b) b.contactos += 1
+    }
+    for (const d of deals) {
+      const contact = d.primary_contact_id ? contactUtmById.get(d.primary_contact_id) : undefined
+      const adId = contact?.utm_content
+      if (!adId) continue
+      const b = getAdBucket(adId)
+      if (!b) continue
+      b.deals += 1
+      if (d.is_won) {
+        b.dealsGanados += 1
+        b.importeGanado += Number(d.amount)
+      }
+    }
+    const byAd = Array.from(adBuckets.values())
+      .map((b) => ({
+        adId: b.adId,
+        adName: b.adName,
+        thumbnailUrl: b.thumbnailUrl,
+        inversion: round2(b.inversion),
+        contactos: b.contactos,
+        cpa: b.inversion && b.contactos ? round2(b.inversion / b.contactos) : null,
+        deals: b.deals,
+        dealsGanados: b.dealsGanados,
+        importeGanado: round2(b.importeGanado),
+      }))
+      .sort((a, b) => b.inversion - a.inversion)
+
+    res.status(200).json({
+      connected: true,
+      totalContactos: contacts.length,
+      dealsAbiertos,
+      dealsGanados,
+      dealsPerdidos,
+      importeAbierto: round2(importeAbierto),
+      importeGanado: round2(importeGanado),
+      tasaCierre,
+      pipeline,
+      byCampaign,
+      byAd,
+    })
+  } catch (e) {
+    res.status(502).json({ error: (e as Error).message || 'No se pudo leer datos de negocio desde Supabase.' })
   }
 }

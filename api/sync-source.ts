@@ -75,6 +75,7 @@ const SYNC_WEBHOOKS: Record<string, string | undefined> = {
   youtube: process.env.N8N_YOUTUBE_SYNC_WEBHOOK_URL,
   'tiktok-ads': process.env.N8N_TIKTOK_ADS_SYNC_WEBHOOK_URL,
   'tiktok-org': process.env.N8N_TIKTOK_ORG_SYNC_WEBHOOK_URL,
+  hubspot: process.env.N8N_HUBSPOT_SYNC_WEBHOOK_URL,
 }
 
 /** Webhooks adicionales que se disparan junto al de su plataforma (mismo
@@ -133,18 +134,29 @@ async function handleRequest(req: any, res: any) {
     Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
   }
   const sourceResp = await fetch(
-    `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&platform=eq.${encodeURIComponent(platform)}&select=external_id`,
+    `${SUPABASE_URL}/rest/v1/data_sources?client_id=eq.${client.id}&platform=eq.${encodeURIComponent(platform)}&select=external_id,status`,
     { headers },
   )
   if (!sourceResp.ok) {
     res.status(502).json({ error: `Supabase respondió ${sourceResp.status} al leer data_sources.` })
     return
   }
-  const [source] = (await sourceResp.json()) as Array<{ external_id: string | null }>
-  const accountId = source?.external_id?.trim()
-  if (!accountId) {
-    res.status(400).json({ error: 'Guarda primero el identificador de la cuenta antes de sincronizar.' })
-    return
+  const [source] = (await sourceResp.json()) as Array<{ external_id: string | null; status: string }>
+  // HubSpot no tiene "ID de cuenta" (se conecta con un Private App Token): el
+  // workflow de n8n busca la credencial en data_sources por clientId, no
+  // necesita que se le mande ningún identificador.
+  let accountId = ''
+  if (platform === 'hubspot') {
+    if (source?.status !== 'conectado') {
+      res.status(400).json({ error: 'Conecta primero HubSpot (pega el Private App Token) antes de sincronizar.' })
+      return
+    }
+  } else {
+    accountId = source?.external_id?.trim() ?? ''
+    if (!accountId) {
+      res.status(400).json({ error: 'Guarda primero el identificador de la cuenta antes de sincronizar.' })
+      return
+    }
   }
 
   try {

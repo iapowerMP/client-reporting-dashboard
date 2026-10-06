@@ -7,6 +7,7 @@ import {
   Smartphone,
   Settings,
   Radar,
+  Briefcase,
   X,
   Building2,
   ChevronDown,
@@ -18,10 +19,11 @@ import {
   PAID_TAB_TO_CONNECTION,
   SEO_TAB_TO_CONNECTION,
   SOCIAL_TAB_TO_CONNECTION,
+  BUSINESS_TAB_TO_CONNECTION,
 } from '@/data/catalog'
 import type { ClientInfo } from '@/lib/useClientInfo'
 
-type Category = 'paid' | 'seo' | 'social'
+type Category = 'paid' | 'seo' | 'social' | 'business'
 
 interface NavItem {
   suffix: string
@@ -37,6 +39,7 @@ const NAV_ITEMS: NavItem[] = [
   { suffix: '/paid', label: 'Paid Media', icon: DollarSign, category: 'paid' },
   { suffix: '/seo', label: 'SEO', icon: Search, category: 'seo' },
   { suffix: '/social', label: 'Redes Sociales', icon: Smartphone, category: 'social' },
+  { suffix: '/negocio', label: 'Negocio', icon: Briefcase, category: 'business' },
 ]
 
 /** Informes especiales (report_template = 'programmatic'): un único apartado,
@@ -84,6 +87,7 @@ export default function Sidebar({
     paid: Object.values(PAID_TAB_TO_CONNECTION).some(isVisible),
     seo: Object.values(SEO_TAB_TO_CONNECTION).some(isVisible),
     social: Object.values(SOCIAL_TAB_TO_CONNECTION).some(isVisible),
+    business: Object.values(BUSINESS_TAB_TO_CONNECTION).some(isVisible),
   }
   const navItems =
     reportTemplate === 'programmatic'

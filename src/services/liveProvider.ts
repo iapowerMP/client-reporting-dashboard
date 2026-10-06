@@ -4,7 +4,7 @@
  * las credenciales del cliente. Los secretos viven en el servidor, nunca en
  * el navegador.
  */
-import type { DataProvider, DateRange, OverviewData, PaidData, ProgrammaticData, SeoData, SocialData } from './types'
+import type { DataProvider, DateRange, OverviewData, PaidData, ProgrammaticData, NegocioData, SeoData, SocialData } from './types'
 import { authHeaders, clearToken } from '@/lib/authToken'
 
 async function fetchJson<T>(
@@ -60,6 +60,9 @@ export const liveProvider: DataProvider = {
   // Vercel (12) — ver comentario al inicio de api/paid.ts.
   getProgrammatic: (client, range) =>
     fetchJson<ProgrammaticData>('/api/paid', client, range, { mode: 'programmatic' }),
+  // Igual que getProgrammatic: vive en /api/paid (?mode=negocio) para no
+  // superar el límite de Serverless Functions del plan de Vercel.
+  getNegocio: (client, range) => fetchJson<NegocioData>('/api/paid', client, range, { mode: 'negocio' }),
   getSeo: (client, range) => fetchJson<SeoData>('/api/seo', client, range),
   getSocial: (client, range) => fetchJson<SocialData>('/api/social', client, range),
 }

@@ -145,6 +145,64 @@ async function handleRequest(req: any, res: any) {
       const digits = externalId.replace(/^act_/i, '').trim()
       externalId = digits ? `act_${digits}` : ''
     }
+
+    // HubSpot no tiene "ID de cuenta": el único campo del formulario es un
+    // Private App Token (generado a mano en la propia cuenta de HubSpot, sin
+    // app OAuth ni revisión). Se guarda como credencial (oauth_access_token),
+    // nunca en external_id, y nunca se vuelve a exponer al frontend (el GET
+    // de abajo ya no selecciona esa columna).
+    if (platform === 'hubspot') {
+      const token = rawExternalId.trim()
+      if (!token) {
+        res.status(400).json({ error: 'Pega el Private App Token de HubSpot.' })
+        return
+      }
+      let client: { id: string } | null
+      try {
+        client = await resolveClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
+      } catch (e) {
+        res.status(502).json({ error: `No se pudo resolver el cliente: ${(e as Error).message}` })
+        return
+      }
+      if (!client) {
+        res.status(404).json({ error: `No existe ningún cliente con el identificador "${slug}".` })
+        return
+      }
+      if (!(await checkAccess(req, client.id, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY))) {
+        res.status(401).json({ error: 'No tienes acceso a este informe. Inicia sesión de nuevo.' })
+        return
+      }
+      try {
+        const url = `${SUPABASE_URL}/rest/v1/data_sources?on_conflict=client_id,platform`
+        const resp = await fetch(url, {
+          method: 'POST',
+          headers: { ...headers, Prefer: 'resolution=merge-duplicates,return=representation' },
+          body: JSON.stringify([
+            {
+              client_id: client.id,
+              platform: 'hubspot',
+              external_id: null,
+              status: 'conectado',
+              auth_method: 'private-app',
+              oauth_access_token: token,
+              oauth_token_expires_at: null,
+            },
+          ]),
+        })
+        if (!resp.ok) {
+          res.status(502).json({ error: `Supabase respondió ${resp.status} al guardar data_sources.` })
+          return
+        }
+        const [row] = await resp.json()
+        // Nunca se devuelve oauth_access_token al navegador, ni aquí ni en el
+        // GET de abajo (que ya no lo selecciona).
+        res.status(200).json({ source: { platform: row.platform, status: row.status, external_id: null, auth_method: row.auth_method } })
+      } catch {
+        res.status(502).json({ error: 'No se pudo guardar en Supabase.' })
+      }
+      return
+    }
+
     let client: { id: string } | null
     try {
       client = await resolveClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, slug)
