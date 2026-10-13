@@ -1,15 +1,11 @@
 /**
  * Workflow n8n: "CRD - HubSpot to Supabase (ingesta diaria, multi-cliente)"
  * ----------------------------------------------------------------------------
- * ⚠️ ESTADO: diseñado y escrito aquí, pero TODAVÍA NO CREADO EN VIVO EN N8N.
- * El conector MCP de n8n no estaba autenticado en esta sesión (se necesita
- * autorizarlo desde claude.ai o con `/mcp` en una sesión interactiva) — en
- * cuanto esté disponible, hay que pasar este código por el flujo habitual:
- * get_sdk_reference → search_nodes/get_node_types (para confirmar los
- * parámetros exactos de paginación de httpRequest, que aquí se simplifican a
- * una sola página — ver más abajo) → validate_workflow →
- * create_workflow_from_code. Este archivo es la especificación completa, no
- * una copia de algo ya validado.
+ * ESTADO: creado y activo en n8n (id 6DR41yLT4oudCett,
+ * https://n8n.themediapower.com/workflow/6DR41yLT4oudCett). Este archivo es
+ * el espejo versionado del workflow real — cualquier cambio aquí debe
+ * pasarse también por validate_workflow → update_workflow (MCP de n8n) para
+ * que el workflow en vivo quede igual.
  *
  * El prefijo "CRD" (Client Reporting Dashboard) identifica los workflows de
  * este proyecto entre los demás que puedan convivir en la misma instancia
@@ -71,6 +67,14 @@
  *     deals en la ventana de 90 días (o en el histórico completo de la
  *     primera sincronización), se quedarán fuera hasta que se añada
  *     paginación real — a revisar con datos de uso reales de Media Power.
+ *     IMPORTANTE: ambas búsquedas llevan `sorts: [{ propertyName:
+ *     "createdate", direction: "DESCENDING" }]` precisamente por este
+ *     límite de 100 — sin esto, HubSpot devuelve la página en un orden no
+ *     garantizado (en la práctica, salían los 100 contactos/deals más
+ *     antiguos primero), así que con un CRM histórico grande la primera
+ *     sincronización nunca llegaba a traer nada reciente y el informe
+ *     salía con 0 contactos en cualquier rango de fechas. Con el sort,
+ *     cada sincronización prioriza lo más nuevo dentro del límite de 100.
  *   - "Asociación principal" de un deal = el primer contacto que devuelve
  *     la API de asociaciones para ese deal (`to[0]`), sin desambiguar si
  *     HubSpot alguna vez devuelve varios.
@@ -116,7 +120,7 @@ const manualSyncWebhook = trigger({
     name: 'Sincronizacion manual (webhook)',
     parameters: {
       httpMethod: 'POST',
-      path: 'REEMPLAZAR-token-secreto-webhook',
+      path: 'hubspot-sync-9191cf2437653bb2ee0a7530124762580a519ba0c9aeeb67fb6c0776ef5053f3',
       authentication: 'none',
       responseMode: 'onReceived',
     },
@@ -240,7 +244,7 @@ const fetchContacts = node({
       sendBody: true,
       specifyBody: 'json',
       jsonBody: expr(
-        '{{ JSON.stringify({ limit: 100, properties: ["email","createdate","lifecyclestage","utm_campaign","utm_source","utm_medium","utm_content","utm_term"], filterGroups: [{ filters: [{ propertyName: "lastmodifieddate", operator: "GTE", value: String($("Ventana de fechas").item.json.sinceMs) }] }] }) }}',
+        '{{ JSON.stringify({ limit: 100, sorts: [{ propertyName: "createdate", direction: "DESCENDING" }], properties: ["email","createdate","lifecyclestage","utm_campaign","utm_source","utm_medium","utm_content","utm_term"], filterGroups: [{ filters: [{ propertyName: "lastmodifieddate", operator: "GTE", value: String($("Ventana de fechas").item.json.sinceMs) }] }] }) }}',
       ),
     },
     onError: 'continueErrorOutput',
@@ -268,7 +272,7 @@ const fetchDeals = node({
       sendBody: true,
       specifyBody: 'json',
       jsonBody: expr(
-        '{{ JSON.stringify({ limit: 100, properties: ["dealname","amount","dealstage","pipeline","createdate","closedate","hs_is_closed","hs_is_closed_won"], filterGroups: [{ filters: [{ propertyName: "hs_lastmodifieddate", operator: "GTE", value: String($("Ventana de fechas").item.json.sinceMs) }] }] }) }}',
+        '{{ JSON.stringify({ limit: 100, sorts: [{ propertyName: "createdate", direction: "DESCENDING" }], properties: ["dealname","amount","dealstage","pipeline","createdate","closedate","hs_is_closed","hs_is_closed_won"], filterGroups: [{ filters: [{ propertyName: "hs_lastmodifieddate", operator: "GTE", value: String($("Ventana de fechas").item.json.sinceMs) }] }] }) }}',
       ),
     },
     onError: 'continueErrorOutput',
