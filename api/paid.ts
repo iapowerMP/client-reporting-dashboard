@@ -627,11 +627,15 @@ interface HubspotContactRow {
 }
 
 interface HubspotDealRow {
+  hubspot_deal_id: string
+  name: string | null
   stage_label: string | null
   stage_order: number | null
   is_closed: boolean
   is_won: boolean
   amount: string | number
+  create_date: string | null
+  close_date: string | null
   primary_contact_id: string | null
 }
 
@@ -690,27 +694,38 @@ async function handleNegocioRequest(req: any, res: any) {
     importeAbierto: 0,
     importeGanado: 0,
     tasaCierre: null as number | null,
-    pipeline: [] as Array<{ stage: string; count: number; amount: number }>,
+    pipeline: [] as Array<{
+      stage: string
+      count: number
+      amount: number
+      deals: Array<{ dealId: string; company: string; amount: number }>
+    }>,
     byCampaign: [] as Array<{
       campaign: string
       platform: 'Google Ads' | 'Meta Ads' | null
       inversion: number
-      contactos: number
-      cpa: number | null
-      deals: number
-      dealsGanados: number
-      importeGanado: number
+      clicks: number
+      leads: number
+      tasaConversion: number | null
+      oportunidades: number
+      costePorOportunidad: number | null
+      adquisiciones: number
+      costePorAdquisicion: number | null
+      roas: number | null
     }>,
     byAd: [] as Array<{
       adId: string
       adName: string
       thumbnailUrl: string | null
       inversion: number
-      contactos: number
-      cpa: number | null
-      deals: number
-      dealsGanados: number
-      importeGanado: number
+      clicks: number
+      leads: number
+      tasaConversion: number | null
+      oportunidades: number
+      costePorOportunidad: number | null
+      adquisiciones: number
+      costePorAdquisicion: number | null
+      roas: number | null
     }>,
   }
 
@@ -736,6 +751,17 @@ async function handleNegocioRequest(req: any, res: any) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(from)) parts.push([col, `gte.${from}T00:00:00`])
       if (/^\d{4}-\d{2}-\d{2}$/.test(to)) parts.push([col, `lte.${to}T23:59:59`])
       return parts
+    }
+    // Mismo criterio que dateFilters, pero en memoria (para create_date/
+    // close_date de hubspot_deals, que se leen sin filtrar en la consulta —
+    // el pipeline es histórico completo, pero "oportunidades"/"adquisiciones"
+    // por campaña sí se acotan al rango, igual que "Contactos").
+    const inRange = (isoDate: string | null): boolean => {
+      if (!isoDate) return false
+      const day = isoDate.slice(0, 10)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(from) && day < from) return false
+      if (/^\d{4}-\d{2}-\d{2}$/.test(to) && day > to) return false
+      return true
     }
 
     const contactsQuery = new URLSearchParams({ client_id: `eq.${client.id}` })
@@ -782,8 +808,8 @@ async function handleNegocioRequest(req: any, res: any) {
       for (const r of rows) contactUtmById.set(r.hubspot_contact_id, { utm_campaign: r.utm_campaign, utm_content: r.utm_content })
     }
 
-    // --- Coste real por campaña (Google Ads + Meta Ads) y por anuncio (Meta) ---
-    const campaignCost = new Map<'Google Ads' | 'Meta Ads', Map<string, number>>([
+    // --- Coste + clics reales por campaña (Google Ads + Meta Ads) y por anuncio (Meta) ---
+    const campaignCost = new Map<'Google Ads' | 'Meta Ads', Map<string, { cost: number; clicks: number }>>([
       ['Google Ads', new Map()],
       ['Meta Ads', new Map()],
     ])
@@ -797,11 +823,16 @@ async function handleNegocioRequest(req: any, res: any) {
         if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
         const rows = await fetchAllRows<CampaignRow>(`${SUPABASE_URL}/rest/v1/${source.table}?${query.toString()}`, headers, source.table)
         const byName = campaignCost.get(source.platform)!
-        for (const r of rows) byName.set(r.campaign_name, (byName.get(r.campaign_name) ?? 0) + Number(r.cost))
+        for (const r of rows) {
+          const cur = byName.get(r.campaign_name) ?? { cost: 0, clicks: 0 }
+          cur.cost += Number(r.cost)
+          cur.clicks += Number(r.clicks)
+          byName.set(r.campaign_name, cur)
+        }
       }),
     )
 
-    const adCost = new Map<string, { adName: string; thumbnailUrl: string | null; cost: number }>()
+    const adCost = new Map<string, { adName: string; thumbnailUrl: string | null; cost: number; clicks: number }>()
     const metaAccountId = accountByPlatform.get('meta-ads') ?? ''
     if (metaAccountId) {
       const query = new URLSearchParams({ client_id: `eq.${client.id}`, ad_account_id: `eq.${metaAccountId}` })
@@ -809,16 +840,20 @@ async function handleNegocioRequest(req: any, res: any) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(to)) query.append('date', `lte.${to}`)
       const rows = await fetchAllRows<AdRow>(`${SUPABASE_URL}/rest/v1/meta_ad_daily?${query.toString()}`, headers, 'meta_ad_daily')
       for (const r of rows) {
-        const cur = adCost.get(r.ad_id) ?? { adName: r.ad_name, thumbnailUrl: null, cost: 0 }
+        const cur = adCost.get(r.ad_id) ?? { adName: r.ad_name, thumbnailUrl: null, cost: 0, clicks: 0 }
         cur.adName = r.ad_name
         cur.cost += Number(r.cost)
+        cur.clicks += Number(r.clicks)
         if (r.thumbnail_url) cur.thumbnailUrl = r.thumbnail_url
         adCost.set(r.ad_id, cur)
       }
     }
 
-    // --- Pipeline ---
-    const pipelineMap = new Map<string, { stage: string; order: number; count: number; amount: number }>()
+    // --- Pipeline: tablero por etapa (empresa + importe de cada negocio) ---
+    const pipelineMap = new Map<
+      string,
+      { stage: string; order: number; count: number; amount: number; deals: Array<{ dealId: string; company: string; amount: number }> }
+    >()
     let dealsAbiertos = 0
     let dealsGanados = 0
     let dealsPerdidos = 0
@@ -826,12 +861,13 @@ async function handleNegocioRequest(req: any, res: any) {
     let importeGanado = 0
     for (const d of deals) {
       const stage = d.stage_label || 'Sin etapa'
-      const entry = pipelineMap.get(stage) ?? { stage, order: d.stage_order ?? 999, count: 0, amount: 0 }
+      const amount = Number(d.amount)
+      const entry = pipelineMap.get(stage) ?? { stage, order: d.stage_order ?? 999, count: 0, amount: 0, deals: [] }
       entry.count += 1
-      entry.amount += Number(d.amount)
+      entry.amount += amount
+      entry.deals.push({ dealId: d.hubspot_deal_id, company: d.name || 'Sin nombre', amount: round2(amount) })
       pipelineMap.set(stage, entry)
 
-      const amount = Number(d.amount)
       if (!d.is_closed) {
         dealsAbiertos += 1
         importeAbierto += amount
@@ -844,18 +880,30 @@ async function handleNegocioRequest(req: any, res: any) {
     }
     const pipeline = Array.from(pipelineMap.values())
       .sort((a, b) => a.order - b.order)
-      .map((s) => ({ stage: s.stage, count: s.count, amount: round2(s.amount) }))
+      .map((s) => ({
+        stage: s.stage,
+        count: s.count,
+        amount: round2(s.amount),
+        deals: s.deals.sort((a, b) => b.amount - a.amount),
+      }))
     const tasaCierre = dealsGanados + dealsPerdidos ? round2((dealsGanados / (dealsGanados + dealsPerdidos)) * 100) : null
 
-    // --- Coste de adquisición por campaña (utm_campaign = nombre exacto) ---
+    // --- Coste por oportunidad/adquisición por campaña (utm_campaign = nombre
+    //     exacto). "Leads" = contactos con UTM de esa campaña creados en el
+    //     rango (coste por lead ya lo da la propia plataforma de anuncios, no
+    //     se repite aquí). "Oportunidades" = negocios de esa campaña creados
+    //     en el rango (coste por oportunidad). "Adquisiciones" = negocios
+    //     ganados cuyo cierre cae en el rango (coste por adquisición, y ROAS
+    //     con el importe ganado de esas adquisiciones). ---
     type CampaignBucket = {
       campaign: string
       platform: 'Google Ads' | 'Meta Ads' | null
       inversion: number
-      contactos: number
-      deals: number
-      dealsGanados: number
-      importeGanado: number
+      clicks: number
+      leads: number
+      oportunidades: number
+      adquisiciones: number
+      importeAdquirido: number
     }
     const campaignBuckets = new Map<string, CampaignBucket>()
     const matchingPlatforms = (name: string): Array<'Google Ads' | 'Meta Ads'> => {
@@ -872,14 +920,16 @@ async function handleNegocioRequest(req: any, res: any) {
       const key = `${name}::${platform ?? 'none'}`
       let b = campaignBuckets.get(key)
       if (!b) {
+        const cost = platform ? campaignCost.get(platform)!.get(name) : undefined
         b = {
           campaign: name,
           platform,
-          inversion: platform ? campaignCost.get(platform)!.get(name) ?? 0 : 0,
-          contactos: 0,
-          deals: 0,
-          dealsGanados: 0,
-          importeGanado: 0,
+          inversion: cost?.cost ?? 0,
+          clicks: cost?.clicks ?? 0,
+          leads: 0,
+          oportunidades: 0,
+          adquisiciones: 0,
+          importeAdquirido: 0,
         }
         campaignBuckets.set(key, b)
       }
@@ -889,7 +939,7 @@ async function handleNegocioRequest(req: any, res: any) {
       if (!c.utm_campaign) continue
       const platforms = matchingPlatforms(c.utm_campaign)
       const targets = platforms.length ? platforms : [null]
-      for (const p of targets) getCampaignBucket(c.utm_campaign, p).contactos += 1
+      for (const p of targets) getCampaignBucket(c.utm_campaign, p).leads += 1
     }
     for (const d of deals) {
       const contact = d.primary_contact_id ? contactUtmById.get(d.primary_contact_id) : undefined
@@ -900,10 +950,10 @@ async function handleNegocioRequest(req: any, res: any) {
       const amount = Number(d.amount)
       for (const p of targets) {
         const b = getCampaignBucket(name, p)
-        b.deals += 1
-        if (d.is_won) {
-          b.dealsGanados += 1
-          b.importeGanado += amount
+        if (inRange(d.create_date)) b.oportunidades += 1
+        if (d.is_won && inRange(d.close_date)) {
+          b.adquisiciones += 1
+          b.importeAdquirido += amount
         }
       }
     }
@@ -912,26 +962,31 @@ async function handleNegocioRequest(req: any, res: any) {
         campaign: b.campaign,
         platform: b.platform,
         inversion: round2(b.inversion),
-        contactos: b.contactos,
-        cpa: b.inversion && b.contactos ? round2(b.inversion / b.contactos) : null,
-        deals: b.deals,
-        dealsGanados: b.dealsGanados,
-        importeGanado: round2(b.importeGanado),
+        clicks: b.clicks,
+        leads: b.leads,
+        tasaConversion: b.clicks ? round2((b.leads / b.clicks) * 100) : null,
+        oportunidades: b.oportunidades,
+        costePorOportunidad: b.oportunidades ? round2(b.inversion / b.oportunidades) : null,
+        adquisiciones: b.adquisiciones,
+        costePorAdquisicion: b.adquisiciones ? round2(b.inversion / b.adquisiciones) : null,
+        roas: b.inversion ? round2(b.importeAdquirido / b.inversion) : null,
       }))
       .sort((a, b) => b.inversion - a.inversion)
 
-    // --- Coste de adquisición por anuncio (utm_content = ad_id, solo Meta
-    //     Ads: es la única plataforma con datos de coste a nivel de anuncio
-    //     ya ingeridos, en meta_ad_daily) ---
+    // --- Coste por oportunidad/adquisición por anuncio (utm_content = ad_id,
+    //     solo Meta Ads: es la única plataforma con datos de coste a nivel de
+    //     anuncio ya ingeridos, en meta_ad_daily) — mismas métricas que
+    //     byCampaign, a nivel de anuncio. ---
     type AdBucket = {
       adId: string
       adName: string
       thumbnailUrl: string | null
       inversion: number
-      contactos: number
-      deals: number
-      dealsGanados: number
-      importeGanado: number
+      clicks: number
+      leads: number
+      oportunidades: number
+      adquisiciones: number
+      importeAdquirido: number
     }
     const adBuckets = new Map<string, AdBucket>()
     const getAdBucket = (adId: string): AdBucket | null => {
@@ -939,7 +994,17 @@ async function handleNegocioRequest(req: any, res: any) {
       if (!ad) return null // utm_content no coincide con ningún ad_id de Meta en este rango
       let b = adBuckets.get(adId)
       if (!b) {
-        b = { adId, adName: ad.adName, thumbnailUrl: ad.thumbnailUrl, inversion: ad.cost, contactos: 0, deals: 0, dealsGanados: 0, importeGanado: 0 }
+        b = {
+          adId,
+          adName: ad.adName,
+          thumbnailUrl: ad.thumbnailUrl,
+          inversion: ad.cost,
+          clicks: ad.clicks,
+          leads: 0,
+          oportunidades: 0,
+          adquisiciones: 0,
+          importeAdquirido: 0,
+        }
         adBuckets.set(adId, b)
       }
       return b
@@ -947,7 +1012,7 @@ async function handleNegocioRequest(req: any, res: any) {
     for (const c of contacts) {
       if (!c.utm_content) continue
       const b = getAdBucket(c.utm_content)
-      if (b) b.contactos += 1
+      if (b) b.leads += 1
     }
     for (const d of deals) {
       const contact = d.primary_contact_id ? contactUtmById.get(d.primary_contact_id) : undefined
@@ -955,10 +1020,11 @@ async function handleNegocioRequest(req: any, res: any) {
       if (!adId) continue
       const b = getAdBucket(adId)
       if (!b) continue
-      b.deals += 1
-      if (d.is_won) {
-        b.dealsGanados += 1
-        b.importeGanado += Number(d.amount)
+      const amount = Number(d.amount)
+      if (inRange(d.create_date)) b.oportunidades += 1
+      if (d.is_won && inRange(d.close_date)) {
+        b.adquisiciones += 1
+        b.importeAdquirido += amount
       }
     }
     const byAd = Array.from(adBuckets.values())
@@ -967,11 +1033,14 @@ async function handleNegocioRequest(req: any, res: any) {
         adName: b.adName,
         thumbnailUrl: b.thumbnailUrl,
         inversion: round2(b.inversion),
-        contactos: b.contactos,
-        cpa: b.inversion && b.contactos ? round2(b.inversion / b.contactos) : null,
-        deals: b.deals,
-        dealsGanados: b.dealsGanados,
-        importeGanado: round2(b.importeGanado),
+        clicks: b.clicks,
+        leads: b.leads,
+        tasaConversion: b.clicks ? round2((b.leads / b.clicks) * 100) : null,
+        oportunidades: b.oportunidades,
+        costePorOportunidad: b.oportunidades ? round2(b.inversion / b.oportunidades) : null,
+        adquisiciones: b.adquisiciones,
+        costePorAdquisicion: b.adquisiciones ? round2(b.inversion / b.adquisiciones) : null,
+        roas: b.inversion ? round2(b.importeAdquirido / b.inversion) : null,
       }))
       .sort((a, b) => b.inversion - a.inversion)
 

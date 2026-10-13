@@ -737,27 +737,37 @@ export const BUSINESS_TAB_TO_CONNECTION: Record<string, string> = {
 }
 
 /** Etapa del pipeline de HubSpot con su recuento e importe (rango de
- * fechas activo, por fecha de creación del deal). */
+ * fechas activo, por fecha de creación del deal). Cada etapa trae además el
+ * tablero de negocios (empresa + importe) que hay dentro — el pipeline no se
+ * acota al rango de fechas del informe, es la foto actual del CRM. */
 export interface PipelineStageRow {
   stage: string
   count: number
   amount: number
+  deals: Array<{ dealId: string; company: string; amount: number }>
 }
 
-/** Fila de coste de adquisición cruzando contactos de HubSpot (por
- * utm_campaign) con el gasto real de la plataforma de pago cuyo nombre de
- * campaña coincide. `platform` es null en "Sin campaña de pago asociada"
- * (utm_campaign sin coincidencia conocida en el rango) — ahí `inversion`
- * es 0 y `cpa` null a propósito: no hay una base honesta para calcularlo. */
+/** Fila de coste por oportunidad/adquisición cruzando contactos de HubSpot
+ * (por utm_campaign) con el gasto real de la plataforma de pago cuyo nombre
+ * de campaña coincide. `platform` es null en "Sin campaña de pago asociada"
+ * (utm_campaign sin coincidencia conocida en el rango) — ahí `inversion` es
+ * 0 a propósito. El coste por lead ya lo reporta la propia plataforma de
+ * anuncios, así que aquí no se repite: "oportunidades" son los negocios
+ * creados en el rango (coste por oportunidad) y "adquisiciones" los negocios
+ * ganados cuyo cierre cae en el rango (coste por adquisición + ROAS con el
+ * importe ganado de esas adquisiciones). */
 export interface CampaignCpaRow {
   campaign: string
   platform: Extract<Platform, 'Google Ads' | 'Meta Ads'> | null
   inversion: number
-  contactos: number
-  cpa: number | null
-  deals: number
-  dealsGanados: number
-  importeGanado: number
+  clicks: number
+  leads: number
+  tasaConversion: number | null
+  oportunidades: number
+  costePorOportunidad: number | null
+  adquisiciones: number
+  costePorAdquisicion: number | null
+  roas: number | null
 }
 
 /** Igual que CampaignCpaRow pero a nivel de anuncio de Meta Ads (cruzando
@@ -768,11 +778,14 @@ export interface AdCpaRow {
   adName: string
   thumbnailUrl: string | null
   inversion: number
-  contactos: number
-  cpa: number | null
-  deals: number
-  dealsGanados: number
-  importeGanado: number
+  clicks: number
+  leads: number
+  tasaConversion: number | null
+  oportunidades: number
+  costePorOportunidad: number | null
+  adquisiciones: number
+  costePorAdquisicion: number | null
+  roas: number | null
 }
 
 /** KPIs de cabecera de la pestaña Negocio. */

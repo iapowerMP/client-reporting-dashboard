@@ -1,19 +1,7 @@
-import {
-  ResponsiveContainer,
-  ComposedChart,
-  Bar,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-} from 'recharts'
 import ChartCard from '@/components/shared/ChartCard'
-import ChartTooltip from '@/components/shared/ChartTooltip'
 import KpiCard from '@/components/shared/KpiCard'
 import DataTable, { type Column } from '@/components/shared/DataTable'
-import { formatCompact, formatCurrency, formatNumber } from '@/lib/utils'
+import { formatCurrency, formatNumber, formatPercent, formatRoas } from '@/lib/utils'
 import { computeNegocioKpis, type CampaignCpaRow, type AdCpaRow } from '@/data/catalog'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
@@ -21,6 +9,36 @@ import { useDateRange } from '@/lib/dateRange'
 import { useParams, Link } from 'react-router-dom'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 import { Link as LinkIcon } from 'lucide-react'
+
+const acquisitionColumns = <R extends { inversion: number; clicks: number; leads: number; tasaConversion: number | null; oportunidades: number; costePorOportunidad: number | null; adquisiciones: number; costePorAdquisicion: number | null; roas: number | null }>(): Column<R>[] => [
+  { key: 'inversion' as const, header: 'Inversión', align: 'right', sortable: true, render: (r) => formatCurrency(r.inversion, 2) },
+  { key: 'clicks' as const, header: 'Clics', align: 'right', sortable: true, render: (r) => formatNumber(r.clicks) },
+  { key: 'leads' as const, header: 'Leads', align: 'right', sortable: true, render: (r) => formatNumber(r.leads) },
+  {
+    key: 'tasaConversion' as const,
+    header: 'Tasa conversión',
+    align: 'right',
+    sortable: true,
+    render: (r) => (r.tasaConversion === null ? '—' : formatPercent(r.tasaConversion)),
+  },
+  { key: 'oportunidades' as const, header: 'Oportunidades', align: 'right', sortable: true, render: (r) => formatNumber(r.oportunidades) },
+  {
+    key: 'costePorOportunidad' as const,
+    header: 'Coste/oportunidad',
+    align: 'right',
+    sortable: true,
+    render: (r) => (r.costePorOportunidad === null ? '—' : formatCurrency(r.costePorOportunidad, 2)),
+  },
+  { key: 'adquisiciones' as const, header: 'Adquisiciones', align: 'right', sortable: true, render: (r) => formatNumber(r.adquisiciones) },
+  {
+    key: 'costePorAdquisicion' as const,
+    header: 'Coste/adquisición',
+    align: 'right',
+    sortable: true,
+    render: (r) => (r.costePorAdquisicion === null ? '—' : formatCurrency(r.costePorAdquisicion, 2)),
+  },
+  { key: 'roas' as const, header: 'ROAS', align: 'right', sortable: true, render: (r) => (r.roas === null ? '—' : formatRoas(r.roas)) },
+]
 
 const campaignColumns: Column<CampaignCpaRow>[] = [
   {
@@ -35,12 +53,7 @@ const campaignColumns: Column<CampaignCpaRow>[] = [
     ),
   },
   { key: 'platform', header: 'Plataforma', sortable: true, render: (r) => r.platform ?? '—' },
-  { key: 'inversion', header: 'Inversión', align: 'right', sortable: true, render: (r) => formatCurrency(r.inversion, 2) },
-  { key: 'contactos', header: 'Contactos', align: 'right', sortable: true, render: (r) => formatNumber(r.contactos) },
-  { key: 'cpa', header: 'CPA', align: 'right', sortable: true, render: (r) => (r.cpa === null ? '—' : formatCurrency(r.cpa, 2)) },
-  { key: 'deals', header: 'Deals', align: 'right', sortable: true, render: (r) => formatNumber(r.deals) },
-  { key: 'dealsGanados', header: 'Ganados', align: 'right', sortable: true, render: (r) => formatNumber(r.dealsGanados) },
-  { key: 'importeGanado', header: 'Importe ganado', align: 'right', sortable: true, render: (r) => formatCurrency(r.importeGanado, 2) },
+  ...acquisitionColumns<CampaignCpaRow>(),
 ]
 
 const adColumns: Column<AdCpaRow>[] = [
@@ -55,12 +68,7 @@ const adColumns: Column<AdCpaRow>[] = [
       ),
   },
   { key: 'adName', header: 'Anuncio', sortable: true },
-  { key: 'inversion', header: 'Inversión', align: 'right', sortable: true, render: (r) => formatCurrency(r.inversion, 2) },
-  { key: 'contactos', header: 'Contactos', align: 'right', sortable: true, render: (r) => formatNumber(r.contactos) },
-  { key: 'cpa', header: 'CPA', align: 'right', sortable: true, render: (r) => (r.cpa === null ? '—' : formatCurrency(r.cpa, 2)) },
-  { key: 'deals', header: 'Deals', align: 'right', sortable: true, render: (r) => formatNumber(r.deals) },
-  { key: 'dealsGanados', header: 'Ganados', align: 'right', sortable: true, render: (r) => formatNumber(r.dealsGanados) },
-  { key: 'importeGanado', header: 'Importe ganado', align: 'right', sortable: true, render: (r) => formatCurrency(r.importeGanado, 2) },
+  ...acquisitionColumns<AdCpaRow>(),
 ]
 
 export default function Negocio() {
@@ -98,41 +106,39 @@ export default function Negocio() {
         ))}
       </div>
 
-      <ChartCard title="Pipeline por etapa">
-        <div className="h-80">
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={data.pipeline} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#2A2D36" vertical={false} />
-              <XAxis dataKey="stage" stroke="#9CA3AF" fontSize={11} tickLine={false} axisLine={{ stroke: '#2A2D36' }} />
-              <YAxis
-                yAxisId="amount"
-                stroke="#9CA3AF"
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v) => formatCompact(v as number)}
-                width={52}
-              />
-              <YAxis yAxisId="count" orientation="right" stroke="#9CA3AF" fontSize={11} tickLine={false} axisLine={false} width={36} />
-              <Tooltip
-                content={
-                  <ChartTooltip formatter={(v, name) => (name === 'Importe' ? formatCurrency(v, 2) : formatNumber(v))} />
-                }
-                cursor={{ fill: 'rgba(255,255,255,0.03)' }}
-              />
-              <Legend wrapperStyle={{ fontSize: 12, paddingTop: 12 }} iconType="plainline" />
-              <Bar yAxisId="amount" dataKey="amount" name="Importe" fill="#F2FE54" radius={[3, 3, 0, 0]} />
-              <Line yAxisId="count" type="monotone" dataKey="count" name="Deals" stroke="#60A5FA" strokeWidth={2} dot={false} />
-            </ComposedChart>
-          </ResponsiveContainer>
+      <ChartCard title="Pipeline por etapa" noPadding>
+        <div className="flex gap-3 overflow-x-auto p-4">
+          {data.pipeline.map((stage) => (
+            <div key={stage.stage} className="w-64 shrink-0 rounded-control border border-border bg-base">
+              <div className="border-b border-border px-3 py-2">
+                <p className="truncate text-xs font-semibold text-text-primary" title={stage.stage}>
+                  {stage.stage}
+                </p>
+                <p className="text-xs text-text-secondary">
+                  {formatNumber(stage.count)} · {formatCurrency(stage.amount, 0)}
+                </p>
+              </div>
+              <div className="max-h-96 space-y-1.5 overflow-y-auto p-2">
+                {stage.deals.length === 0 && <p className="px-1 py-2 text-xs text-text-secondary">Sin negocios</p>}
+                {stage.deals.map((deal) => (
+                  <div key={deal.dealId} className="rounded-control border border-border bg-card px-2 py-1.5">
+                    <p className="truncate text-xs font-medium text-text-primary" title={deal.company}>
+                      {deal.company}
+                    </p>
+                    <p className="text-xs text-text-secondary">{formatCurrency(deal.amount, 0)}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </ChartCard>
 
-      <ChartCard title="Coste por adquisición por campaña">
+      <ChartCard title="Coste por oportunidad y adquisición por campaña">
         <DataTable columns={campaignColumns} data={data.byCampaign} rowKey={(r) => `${r.campaign}::${r.platform ?? 'none'}`} />
       </ChartCard>
 
-      <ChartCard title="Coste por adquisición por anuncio (Meta Ads)">
+      <ChartCard title="Coste por oportunidad y adquisición por anuncio (Meta Ads)">
         <DataTable columns={adColumns} data={data.byAd} rowKey={(r) => r.adId} />
       </ChartCard>
     </div>
