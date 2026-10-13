@@ -810,27 +810,27 @@ export function computeNegocioKpis(data: {
     {
       label: 'Deals abiertos',
       value: formatNumber(data.dealsAbiertos),
-      description: 'Negocios del pipeline que aún no están cerrados (ni ganados ni perdidos). Histórico completo, no se filtra por fecha.',
+      description: 'Negocios creados dentro del rango seleccionado que aún no están cerrados (ni ganados ni perdidos).',
     },
     {
       label: 'Deals ganados',
       value: formatNumber(data.dealsGanados),
-      description: 'Negocios cerrados como ganados. Histórico completo, no se filtra por fecha.',
+      description: 'Negocios cuya fecha de cierre cae dentro del rango seleccionado y que se cerraron como ganados.',
     },
     {
       label: 'Importe en pipeline',
       value: formatCurrency(data.importeAbierto),
-      description: 'Suma del importe de todos los negocios abiertos. Histórico completo, no se filtra por fecha.',
+      description: 'Suma del importe de los negocios abiertos creados dentro del rango seleccionado.',
     },
     {
       label: 'Importe ganado',
       value: formatCurrency(data.importeGanado),
-      description: 'Suma del importe de los negocios ganados. Histórico completo, no se filtra por fecha.',
+      description: 'Suma del importe de los negocios ganados cuya fecha de cierre cae dentro del rango seleccionado.',
     },
     {
       label: 'Tasa de cierre',
       value: data.tasaCierre === null ? '—' : formatPercent(data.tasaCierre),
-      description: 'Ganados ÷ (ganados + perdidos) × 100. "—" si todavía no hay negocios cerrados.',
+      description: 'Ganados ÷ (ganados + perdidos) × 100, ambos con fecha de cierre dentro del rango seleccionado. "—" si todavía no hay negocios cerrados en el rango.',
     },
   ]
 }

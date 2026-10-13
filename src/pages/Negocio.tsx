@@ -9,6 +9,7 @@ import { useDateRange } from '@/lib/dateRange'
 import { useParams, Link } from 'react-router-dom'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
 import { Link as LinkIcon } from 'lucide-react'
+import InfoTooltip from '@/components/shared/InfoTooltip'
 
 const acquisitionColumns = <R extends { inversion: number; clicks: number; leads: number; tasaConversion: number | null; oportunidades: number; costePorOportunidad: number | null; adquisiciones: number; costePorAdquisicion: number | null; roas: number | null }>(): Column<R>[] => [
   {
@@ -163,7 +164,16 @@ export default function Negocio() {
         ))}
       </div>
 
-      <ChartCard title="Pipeline por etapa" noPadding>
+      <ChartCard
+        title="Pipeline por etapa"
+        noPadding
+        action={
+          <span className="flex items-center gap-1 text-xs text-text-secondary">
+            Histórico completo
+            <InfoTooltip text="Este tablero no se filtra por el rango de fechas seleccionado: muestra el estado actual de todo el pipeline, como una foto del CRM en este momento." />
+          </span>
+        }
+      >
         <div className="flex gap-3 overflow-x-auto p-4">
           {data.pipeline.map((stage) => (
             <div key={stage.stage} className="w-64 shrink-0 rounded-control border border-border bg-base">

@@ -850,15 +850,13 @@ async function handleNegocioRequest(req: any, res: any) {
     }
 
     // --- Pipeline: tablero por etapa (empresa + importe de cada negocio) ---
+    // Esta tabla sí es una foto histórica completa del CRM (ver comentario de
+    // `dealsQuery` más arriba) — a propósito no se filtra por fecha, es la
+    // única vista del tab pensada para no moverse con el selector.
     const pipelineMap = new Map<
       string,
       { stage: string; order: number; count: number; amount: number; deals: Array<{ dealId: string; company: string; amount: number }> }
     >()
-    let dealsAbiertos = 0
-    let dealsGanados = 0
-    let dealsPerdidos = 0
-    let importeAbierto = 0
-    let importeGanado = 0
     for (const d of deals) {
       const stage = d.stage_label || 'Sin etapa'
       const amount = Number(d.amount)
@@ -867,16 +865,6 @@ async function handleNegocioRequest(req: any, res: any) {
       entry.amount += amount
       entry.deals.push({ dealId: d.hubspot_deal_id, company: d.name || 'Sin nombre', amount: round2(amount) })
       pipelineMap.set(stage, entry)
-
-      if (!d.is_closed) {
-        dealsAbiertos += 1
-        importeAbierto += amount
-      } else if (d.is_won) {
-        dealsGanados += 1
-        importeGanado += amount
-      } else {
-        dealsPerdidos += 1
-      }
     }
     const pipeline = Array.from(pipelineMap.values())
       .sort((a, b) => a.order - b.order)
@@ -886,6 +874,34 @@ async function handleNegocioRequest(req: any, res: any) {
         amount: round2(s.amount),
         deals: s.deals.sort((a, b) => b.amount - a.amount),
       }))
+
+    // --- KPIs de arriba: a diferencia del tablero de pipeline, estos sí deben
+    //     moverse con el selector de fechas (si no, la fila entera de arriba
+    //     parece congelada) — mismo criterio que "Oportunidades"/
+    //     "Adquisiciones" de las tablas de campaña: abiertos = creados en el
+    //     rango y aún no cerrados; ganados/perdidos = cerrados dentro del
+    //     rango (por close_date), sea cual sea su fecha de creación.
+    let dealsAbiertos = 0
+    let dealsGanados = 0
+    let dealsPerdidos = 0
+    let importeAbierto = 0
+    let importeGanado = 0
+    for (const d of deals) {
+      const amount = Number(d.amount)
+      if (!d.is_closed) {
+        if (inRange(d.create_date)) {
+          dealsAbiertos += 1
+          importeAbierto += amount
+        }
+      } else if (d.is_won) {
+        if (inRange(d.close_date)) {
+          dealsGanados += 1
+          importeGanado += amount
+        }
+      } else if (inRange(d.close_date)) {
+        dealsPerdidos += 1
+      }
+    }
     const tasaCierre = dealsGanados + dealsPerdidos ? round2((dealsGanados / (dealsGanados + dealsPerdidos)) * 100) : null
 
     // --- Coste por oportunidad/adquisición por campaña (utm_campaign = nombre
