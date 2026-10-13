@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils'
 import type { KpiData } from '@/data/catalog'
+import InfoTooltip from './InfoTooltip'
 
 interface KpiCardProps extends KpiData {
   /** Resalta la card con un borde de acento (usar con moderación). */
@@ -18,6 +19,7 @@ export default function KpiCard({
   deltaPositive = true,
   highlight = false,
   className,
+  description,
 }: KpiCardProps) {
   return (
     <div
@@ -27,8 +29,9 @@ export default function KpiCard({
         className,
       )}
     >
-      <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+      <p className="flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-text-secondary">
         {label}
+        {description && <InfoTooltip text={description} />}
       </p>
       <p className="mt-2 text-2xl font-bold leading-tight text-text-primary">
         {value}

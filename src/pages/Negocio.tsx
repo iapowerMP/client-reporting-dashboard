@@ -11,40 +11,86 @@ import { Loading, ErrorState } from '@/components/shared/AsyncState'
 import { Link as LinkIcon } from 'lucide-react'
 
 const acquisitionColumns = <R extends { inversion: number; clicks: number; leads: number; tasaConversion: number | null; oportunidades: number; costePorOportunidad: number | null; adquisiciones: number; costePorAdquisicion: number | null; roas: number | null }>(): Column<R>[] => [
-  { key: 'inversion' as const, header: 'Inversión', align: 'right', sortable: true, render: (r) => formatCurrency(r.inversion, 2) },
-  { key: 'clicks' as const, header: 'Clics', align: 'right', sortable: true, render: (r) => formatNumber(r.clicks) },
-  { key: 'leads' as const, header: 'Leads', align: 'right', sortable: true, render: (r) => formatNumber(r.leads) },
+  {
+    key: 'inversion' as const,
+    header: 'Inversión',
+    align: 'right',
+    sortable: true,
+    description: 'Gasto real en Google Ads/Meta Ads durante el rango de fechas seleccionado.',
+    render: (r) => formatCurrency(r.inversion, 2),
+  },
+  {
+    key: 'clicks' as const,
+    header: 'Clics',
+    align: 'right',
+    sortable: true,
+    description: 'Clics en los anuncios durante el rango de fechas seleccionado.',
+    render: (r) => formatNumber(r.clicks),
+  },
+  {
+    key: 'leads' as const,
+    header: 'Leads',
+    align: 'right',
+    sortable: true,
+    description: 'Contactos de HubSpot creados en el rango seleccionado, atribuidos por su UTM.',
+    render: (r) => formatNumber(r.leads),
+  },
   {
     key: 'tasaConversion' as const,
     header: 'Tasa conversión',
     align: 'right',
     sortable: true,
+    description: 'Leads ÷ Clics × 100.',
     render: (r) => (r.tasaConversion === null ? '—' : formatPercent(r.tasaConversion)),
   },
-  { key: 'oportunidades' as const, header: 'Oportunidades', align: 'right', sortable: true, render: (r) => formatNumber(r.oportunidades) },
+  {
+    key: 'oportunidades' as const,
+    header: 'Oportunidades',
+    align: 'right',
+    sortable: true,
+    description: 'Negocios creados en el rango seleccionado, atribuidos a través del contacto principal.',
+    render: (r) => formatNumber(r.oportunidades),
+  },
   {
     key: 'costePorOportunidad' as const,
     header: 'Coste/oportunidad',
     align: 'right',
     sortable: true,
+    description: 'Inversión ÷ Oportunidades: cuánto cuesta de media generar un negocio nuevo en el pipeline.',
     render: (r) => (r.costePorOportunidad === null ? '—' : formatCurrency(r.costePorOportunidad, 2)),
   },
-  { key: 'adquisiciones' as const, header: 'Adquisiciones', align: 'right', sortable: true, render: (r) => formatNumber(r.adquisiciones) },
+  {
+    key: 'adquisiciones' as const,
+    header: 'Adquisiciones',
+    align: 'right',
+    sortable: true,
+    description: 'Negocios ganados cuya fecha de cierre cae en el rango seleccionado.',
+    render: (r) => formatNumber(r.adquisiciones),
+  },
   {
     key: 'costePorAdquisicion' as const,
     header: 'Coste/adquisición',
     align: 'right',
     sortable: true,
+    description: 'Inversión ÷ Adquisiciones: cuánto cuesta de media ganar un cliente (CAC).',
     render: (r) => (r.costePorAdquisicion === null ? '—' : formatCurrency(r.costePorAdquisicion, 2)),
   },
-  { key: 'roas' as const, header: 'ROAS', align: 'right', sortable: true, render: (r) => (r.roas === null ? '—' : formatRoas(r.roas)) },
+  {
+    key: 'roas' as const,
+    header: 'ROAS',
+    align: 'right',
+    sortable: true,
+    description: 'Importe ganado de las adquisiciones del periodo ÷ Inversión: € de negocio cerrado por cada € invertido.',
+    render: (r) => (r.roas === null ? '—' : formatRoas(r.roas)),
+  },
 ]
 
 const campaignColumns: Column<CampaignCpaRow>[] = [
   {
     key: 'campaign',
-    header: 'Campaña (UTM)',
+    header: 'Campaña',
     sortable: true,
+    description: 'Nombre de campaña tal como llega en el utm_campaign de los formularios de HubSpot.',
     render: (r) => (
       <div>
         <p className="font-medium text-text-primary">{r.campaign}</p>
@@ -52,7 +98,13 @@ const campaignColumns: Column<CampaignCpaRow>[] = [
       </div>
     ),
   },
-  { key: 'platform', header: 'Plataforma', sortable: true, render: (r) => r.platform ?? '—' },
+  {
+    key: 'platform',
+    header: 'Plataforma',
+    sortable: true,
+    description: 'Plataforma donde existe una campaña con este mismo nombre — "—" si no hay coincidencia conocida.',
+    render: (r) => r.platform ?? '—',
+  },
   ...acquisitionColumns<CampaignCpaRow>(),
 ]
 
@@ -67,7 +119,12 @@ const adColumns: Column<AdCpaRow>[] = [
         <div className="h-10 w-10 rounded-control border border-border bg-base" />
       ),
   },
-  { key: 'adName', header: 'Anuncio', sortable: true },
+  {
+    key: 'adName',
+    header: 'Anuncio',
+    sortable: true,
+    description: 'Anuncio de Meta Ads cuyo ad_id coincide con el utm_content de los contactos de HubSpot.',
+  },
   ...acquisitionColumns<AdCpaRow>(),
 ]
 
@@ -110,11 +167,11 @@ export default function Negocio() {
         <div className="flex gap-3 overflow-x-auto p-4">
           {data.pipeline.map((stage) => (
             <div key={stage.stage} className="w-64 shrink-0 rounded-control border border-border bg-base">
-              <div className="border-b border-border px-3 py-2">
-                <p className="truncate text-xs font-semibold text-text-primary" title={stage.stage}>
+              <div className="rounded-t-control border-b border-border bg-accent/10 px-3 py-2.5">
+                <p className="truncate text-xs font-bold uppercase tracking-wide text-accent" title={stage.stage}>
                   {stage.stage}
                 </p>
-                <p className="text-xs text-text-secondary">
+                <p className="mt-0.5 text-xs font-medium text-text-secondary">
                   {formatNumber(stage.count)} · {formatCurrency(stage.amount, 0)}
                 </p>
               </div>
@@ -122,7 +179,7 @@ export default function Negocio() {
                 {stage.deals.length === 0 && <p className="px-1 py-2 text-xs text-text-secondary">Sin negocios</p>}
                 {stage.deals.map((deal) => (
                   <div key={deal.dealId} className="rounded-control border border-border bg-card px-2 py-1.5">
-                    <p className="truncate text-xs font-medium text-text-primary" title={deal.company}>
+                    <p className="truncate text-sm font-medium text-text-primary" title={deal.company}>
                       {deal.company}
                     </p>
                     <p className="text-xs text-text-secondary">{formatCurrency(deal.amount, 0)}</p>

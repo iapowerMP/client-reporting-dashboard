@@ -24,6 +24,10 @@ export interface KpiData {
   /** true → verde (bueno), false → rojo (malo), null → gris (neutro, p. ej.
    * Inversión: ni subir ni bajar es en sí "bueno"). */
   deltaPositive?: boolean | null
+  /** Mini-explicación de cómo se calcula el dato, mostrada en un tooltip
+   * (icono de info) junto al label — opcional, solo donde el cálculo no es
+   * obvio a simple vista. */
+  description?: string
 }
 
 export type Platform =
@@ -798,14 +802,35 @@ export function computeNegocioKpis(data: {
   tasaCierre: number | null
 }): KpiData[] {
   return [
-    { label: 'Contactos', value: formatNumber(data.totalContactos) },
-    { label: 'Deals abiertos', value: formatNumber(data.dealsAbiertos) },
-    { label: 'Deals ganados', value: formatNumber(data.dealsGanados) },
-    { label: 'Importe en pipeline', value: formatCurrency(data.importeAbierto) },
-    { label: 'Importe ganado', value: formatCurrency(data.importeGanado) },
+    {
+      label: 'Contactos',
+      value: formatNumber(data.totalContactos),
+      description: 'Contactos de HubSpot creados dentro del rango de fechas seleccionado.',
+    },
+    {
+      label: 'Deals abiertos',
+      value: formatNumber(data.dealsAbiertos),
+      description: 'Negocios del pipeline que aún no están cerrados (ni ganados ni perdidos). Histórico completo, no se filtra por fecha.',
+    },
+    {
+      label: 'Deals ganados',
+      value: formatNumber(data.dealsGanados),
+      description: 'Negocios cerrados como ganados. Histórico completo, no se filtra por fecha.',
+    },
+    {
+      label: 'Importe en pipeline',
+      value: formatCurrency(data.importeAbierto),
+      description: 'Suma del importe de todos los negocios abiertos. Histórico completo, no se filtra por fecha.',
+    },
+    {
+      label: 'Importe ganado',
+      value: formatCurrency(data.importeGanado),
+      description: 'Suma del importe de los negocios ganados. Histórico completo, no se filtra por fecha.',
+    },
     {
       label: 'Tasa de cierre',
       value: data.tasaCierre === null ? '—' : formatPercent(data.tasaCierre),
+      description: 'Ganados ÷ (ganados + perdidos) × 100. "—" si todavía no hay negocios cerrados.',
     },
   ]
 }

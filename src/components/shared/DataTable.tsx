@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import InfoTooltip from './InfoTooltip'
 
 export interface Column<T> {
   key: string
@@ -12,6 +13,9 @@ export interface Column<T> {
   accessor?: (row: T) => number | string
   /** Render personalizado de la celda. */
   render?: (row: T) => ReactNode
+  /** Mini-explicación de cómo se calcula la columna, en un tooltip junto a
+   * la cabecera — opcional, solo donde el cálculo no es obvio. */
+  description?: string
 }
 
 interface DataTableProps<T> {
@@ -97,6 +101,11 @@ export default function DataTable<T>({
                     )}
                   >
                     {col.header}
+                    {col.description && (
+                      <span onClick={(e) => e.stopPropagation()}>
+                        <InfoTooltip text={col.description} />
+                      </span>
+                    )}
                     {col.sortable &&
                       (active ? (
                         sortDir === 'asc' ? (
