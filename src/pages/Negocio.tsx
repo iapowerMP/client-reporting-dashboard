@@ -18,8 +18,9 @@ import { computeNegocioKpis, type CampaignCpaRow, type AdCpaRow } from '@/data/c
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
 import { useDateRange } from '@/lib/dateRange'
-import { useParams } from 'react-router-dom'
+import { useParams, Link } from 'react-router-dom'
 import { Loading, ErrorState } from '@/components/shared/AsyncState'
+import { Link as LinkIcon } from 'lucide-react'
 
 const campaignColumns: Column<CampaignCpaRow>[] = [
   {
@@ -72,6 +73,20 @@ export default function Negocio() {
 
   if (loading) return <Loading />
   if (error || !data) return <ErrorState message={error ?? 'No se pudieron cargar los datos.'} />
+  if (!data.connected) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+        <LinkIcon className="h-6 w-6 text-text-secondary" />
+        <p className="max-w-md text-sm text-text-secondary">
+          Este cliente no tiene HubSpot conectado todavía. Conéctalo desde{' '}
+          <Link to={`/${clientSlug}/settings`} className="text-accent underline">
+            Configuración
+          </Link>{' '}
+          para ver el pipeline de ventas y el coste por adquisición.
+        </p>
+      </div>
+    )
+  }
 
   const kpis = computeNegocioKpis(data)
 

@@ -746,8 +746,14 @@ async function handleNegocioRequest(req: any, res: any) {
       'hubspot_contacts',
     )
 
+    // El pipeline de ventas es una foto del estado actual del CRM, no un
+    // informe de un periodo — a diferencia de "Contactos"/CPA (que sí miran
+    // solo lo generado en el rango para compararlo con el gasto del rango),
+    // aquí se trae siempre el histórico completo del cliente. Si no, con el
+    // rango de fechas por defecto (últimos 30 días) el pipeline aparece
+    // vacío en cuanto los deals llevan más de un mes abiertos, que es lo
+    // habitual en un ciclo de ventas B2B.
     const dealsQuery = new URLSearchParams({ client_id: `eq.${client.id}` })
-    dateFilters('create_date').forEach(([k, v]) => dealsQuery.append(k, v))
     const deals = await fetchAllRows<HubspotDealRow>(
       `${SUPABASE_URL}/rest/v1/hubspot_deals?${dealsQuery.toString()}`,
       headers,
