@@ -624,6 +624,7 @@ interface HubspotContactRow {
   hubspot_contact_id: string
   utm_campaign: string | null
   utm_content: string | null
+  original_source: string | null
 }
 
 interface HubspotDealRow {
@@ -688,6 +689,7 @@ async function handleNegocioRequest(req: any, res: any) {
   const EMPTY = {
     connected: false,
     totalContactos: 0,
+    totalInversion: 0,
     dealsAbiertos: 0,
     dealsGanados: 0,
     dealsPerdidos: 0,
@@ -699,6 +701,14 @@ async function handleNegocioRequest(req: any, res: any) {
       count: number
       amount: number
       deals: Array<{ dealId: string; company: string; amount: number }>
+    }>,
+    byChannel: [] as Array<{
+      channel: string
+      contactos: number
+      oportunidades: number
+      adquisiciones: number
+      tasaCierre: number | null
+      importeGanado: number
     }>,
     byCampaign: [] as Array<{
       campaign: string
@@ -788,10 +798,11 @@ async function handleNegocioRequest(req: any, res: any) {
 
     // El contacto asociado a un deal puede haberse creado fuera del rango de
     // fechas del informe (el deal es posterior) — para atribuir el deal a su
-    // campaña/anuncio hace falta su utm igualmente, así que se resuelve
-    // aparte de `contacts` (que sí respeta el rango, para "Contactos").
-    const contactUtmById = new Map<string, { utm_campaign: string | null; utm_content: string | null }>()
-    for (const c of contacts) contactUtmById.set(c.hubspot_contact_id, { utm_campaign: c.utm_campaign, utm_content: c.utm_content })
+    // campaña/anuncio/canal hace falta su utm/original_source igualmente, así
+    // que se resuelve aparte de `contacts` (que sí respeta el rango, para
+    // "Contactos").
+    const contactUtmById = new Map<string, { utm_campaign: string | null; utm_content: string | null; original_source: string | null }>()
+    for (const c of contacts) contactUtmById.set(c.hubspot_contact_id, { utm_campaign: c.utm_campaign, utm_content: c.utm_content, original_source: c.original_source })
     const missingIds = Array.from(
       new Set(deals.map((d) => d.primary_contact_id).filter((id): id is string => !!id && !contactUtmById.has(id))),
     )
@@ -800,13 +811,55 @@ async function handleNegocioRequest(req: any, res: any) {
       const chunk = missingIds.slice(i, i + CHUNK)
       const idsFilter = chunk.map((id) => encodeURIComponent(id)).join(',')
       const resp = await fetch(
-        `${SUPABASE_URL}/rest/v1/hubspot_contacts?client_id=eq.${client.id}&hubspot_contact_id=in.(${idsFilter})&select=hubspot_contact_id,utm_campaign,utm_content`,
+        `${SUPABASE_URL}/rest/v1/hubspot_contacts?client_id=eq.${client.id}&hubspot_contact_id=in.(${idsFilter})&select=hubspot_contact_id,utm_campaign,utm_content,original_source`,
         { headers },
       )
       if (!resp.ok) continue
-      const rows: Array<{ hubspot_contact_id: string; utm_campaign: string | null; utm_content: string | null }> = await resp.json()
-      for (const r of rows) contactUtmById.set(r.hubspot_contact_id, { utm_campaign: r.utm_campaign, utm_content: r.utm_content })
+      const rows: Array<{ hubspot_contact_id: string; utm_campaign: string | null; utm_content: string | null; original_source: string | null }> = await resp.json()
+      for (const r of rows) contactUtmById.set(r.hubspot_contact_id, { utm_campaign: r.utm_campaign, utm_content: r.utm_content, original_source: r.original_source })
     }
+
+    // --- Desglose por canal (hs_analytics_source de HubSpot): contactos del
+    //     rango + oportunidades/adquisiciones/tasa de cierre de sus negocios,
+    //     igual que el resto de "pestañas" de abajo pero sin cruzar con coste
+    //     de plataforma (el canal no siempre es de pago: orgánico, directo,
+    //     referidos... también cuentan aquí). ---
+    type ChannelBucket = { channel: string; contactos: number; oportunidades: number; adquisiciones: number; perdidos: number; importeGanado: number }
+    const channelBuckets = new Map<string, ChannelBucket>()
+    const getChannelBucket = (channel: string): ChannelBucket => {
+      let b = channelBuckets.get(channel)
+      if (!b) {
+        b = { channel, contactos: 0, oportunidades: 0, adquisiciones: 0, perdidos: 0, importeGanado: 0 }
+        channelBuckets.set(channel, b)
+      }
+      return b
+    }
+    for (const c of contacts) getChannelBucket(c.original_source || 'SIN_FUENTE').contactos += 1
+    for (const d of deals) {
+      const contact = d.primary_contact_id ? contactUtmById.get(d.primary_contact_id) : undefined
+      const channel = contact?.original_source || 'SIN_FUENTE'
+      const amount = Number(d.amount)
+      if (inRange(d.create_date)) getChannelBucket(channel).oportunidades += 1
+      if (d.is_closed && inRange(d.close_date)) {
+        const b = getChannelBucket(channel)
+        if (d.is_won) {
+          b.adquisiciones += 1
+          b.importeGanado += amount
+        } else {
+          b.perdidos += 1
+        }
+      }
+    }
+    const byChannel = Array.from(channelBuckets.values())
+      .map((b) => ({
+        channel: b.channel,
+        contactos: b.contactos,
+        oportunidades: b.oportunidades,
+        adquisiciones: b.adquisiciones,
+        tasaCierre: b.adquisiciones + b.perdidos ? round2((b.adquisiciones / (b.adquisiciones + b.perdidos)) * 100) : null,
+        importeGanado: round2(b.importeGanado),
+      }))
+      .sort((a, b) => b.contactos - a.contactos)
 
     // --- Coste + clics reales por campaña (Google Ads + Meta Ads) y por anuncio (Meta) ---
     const campaignCost = new Map<'Google Ads' | 'Meta Ads', Map<string, { cost: number; clicks: number }>>([
@@ -831,6 +884,17 @@ async function handleNegocioRequest(req: any, res: any) {
         }
       }),
     )
+    // Inversión total del periodo, sumando todas las plataformas conectadas
+    // con gasto en el rango (no solo las campañas que coinciden con algún
+    // utm_campaign de HubSpot) — es el dato que sustituye a "Contactos" en
+    // los KPIs de arriba: la cantidad de contactos mezcla tráfico de pago y
+    // orgánico y además depende del límite de paginación de la sincronización
+    // de HubSpot, así que no es un buen KPI principal; la inversión real sí
+    // lo es.
+    let totalInversion = 0
+    for (const byName of campaignCost.values()) {
+      for (const c of byName.values()) totalInversion += c.cost
+    }
 
     const adCost = new Map<string, { adName: string; thumbnailUrl: string | null; cost: number; clicks: number }>()
     const metaAccountId = accountByPlatform.get('meta-ads') ?? ''
@@ -1063,6 +1127,7 @@ async function handleNegocioRequest(req: any, res: any) {
     res.status(200).json({
       connected: true,
       totalContactos: contacts.length,
+      totalInversion: round2(totalInversion),
       dealsAbiertos,
       dealsGanados,
       dealsPerdidos,
@@ -1070,6 +1135,7 @@ async function handleNegocioRequest(req: any, res: any) {
       importeGanado: round2(importeGanado),
       tasaCierre,
       pipeline,
+      byChannel,
       byCampaign,
       byAd,
     })

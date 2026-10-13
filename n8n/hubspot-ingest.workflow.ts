@@ -39,10 +39,16 @@
  *   - POST /crm/v4/associations/deals/contacts/batch/read
  *
  * Propiedades de contacto leídas: email, createdate, lifecyclestage,
- * utm_campaign, utm_source, utm_medium, utm_content, utm_term — nombres de
- * propiedad internos por defecto de HubSpot (confirmados con un ejemplo real
- * del usuario: utm_content llevaba el ad_id de Meta Ads, formato idéntico a
- * meta_ad_daily.ad_id).
+ * utm_campaign, utm_source, utm_medium, utm_content, utm_term,
+ * hs_analytics_source — nombres de propiedad internos por defecto de
+ * HubSpot (confirmados con un ejemplo real del usuario: utm_content llevaba
+ * el ad_id de Meta Ads, formato idéntico a meta_ad_daily.ad_id).
+ * hs_analytics_source es la "Fuente original de tráfico" que se ve en la
+ * ficha del contacto (ORGANIC_SEARCH, PAID_SOCIAL, DIRECT_TRAFFIC,
+ * REFERRALS, EMAIL_MARKETING, SOCIAL_MEDIA, PAID_SEARCH, OTHER_CAMPAIGNS,
+ * OFFLINE...) — se guarda tal cual en hubspot_contacts.original_source; la
+ * traducción a español para mostrarlo vive en el frontend (catalog.ts), no
+ * aquí, para no tener que republicar el workflow si se afina el mapeo.
  *
  * Monitorización (sync_logs): igual que el resto — "Transformar a SQL
  * upsert" añade un INSERT INTO sync_logs con status='Completado' y
@@ -61,20 +67,30 @@
  * Vercel N8N_HUBSPOT_SYNC_WEBHOOK_URL, nunca en el repo.
  *
  * Simplificaciones actuales (V1, a revisar al probar con datos reales):
- *   - Sin paginación: "Buscar contactos"/"Buscar deals" piden solo
- *     `limit: 100` (el máximo de HubSpot por página) y no siguen
- *     `paging.next.after`. Si un cliente modifica más de 100 contactos o
- *     deals en la ventana de 90 días (o en el histórico completo de la
- *     primera sincronización), se quedarán fuera hasta que se añada
- *     paginación real — a revisar con datos de uso reales de Media Power.
- *     IMPORTANTE: ambas búsquedas llevan `sorts: [{ propertyName:
- *     "createdate", direction: "DESCENDING" }]` precisamente por este
- *     límite de 100 — sin esto, HubSpot devuelve la página en un orden no
- *     garantizado (en la práctica, salían los 100 contactos/deals más
- *     antiguos primero), así que con un CRM histórico grande la primera
- *     sincronización nunca llegaba a traer nada reciente y el informe
- *     salía con 0 contactos en cualquier rango de fechas. Con el sort,
- *     cada sincronización prioriza lo más nuevo dentro del límite de 100.
+ *   - Paginación real (añadida tras detectar el bug): "Buscar contactos" y
+ *     "Buscar deals" usan la paginación nativa del nodo HTTP Request
+ *     (`paginationMode: updateAParameterInEachRequest`, sobrescribiendo el
+ *     campo `after` del body con `paging.next.after` de la respuesta
+ *     anterior, hasta que ya no venga `paging.next`). Antes se pedía solo
+ *     `limit: 100` y se descartaba el resto — con más de 100 contactos o
+ *     deals modificados en la ventana (90 días, o el histórico completo en
+ *     la primera sincronización), todo lo que no cupiera en esa primera
+ *     página se perdía silenciosamente. Esto se detectó porque un contacto
+ *     real de hace una semana (con UTM de pago completo) nunca llegaba a
+ *     Supabase: entre su fecha de creación y la sincronización siguiente ya
+ *     se habían modificado más de 100 contactos, así que quedaba fuera de
+ *     la única página que se pedía. Cada búsqueda pagina hasta un máximo de
+ *     10 páginas (1000 filas) por ejecución como límite de seguridad; cada
+ *     página paginada se une en un único item en "Unir paginas de
+ *     contactos"/"Unir paginas de deals" (Code, runOnceForAllItems) antes
+ *     de seguir la cadena, porque el nodo HTTP con paginación emite un item
+ *     por página, no uno combinado.
+ *     IMPORTANTE: ambas búsquedas siguen llevando `sorts: [{ propertyName:
+ *     "createdate", direction: "DESCENDING" }]` — con el límite de 100 por
+ *     página esto hacía que cada sincronización trajera al menos lo más
+ *     nuevo; ahora con paginación ya no es estrictamente necesario para
+ *     evitar perder filas, pero se mantiene porque no hace daño y mantiene
+ *     consistente el orden de llegada entre ejecuciones.
  *   - "Asociación principal" de un deal = el primer contacto que devuelve
  *     la API de asociaciones para ese deal (`to[0]`), sin desambiguar si
  *     HubSpot alguna vez devuelve varios.
@@ -243,14 +259,63 @@ const fetchContacts = node({
       },
       sendBody: true,
       specifyBody: 'json',
-      jsonBody: expr(
-        '{{ JSON.stringify({ limit: 100, sorts: [{ propertyName: "createdate", direction: "DESCENDING" }], properties: ["email","createdate","lifecyclestage","utm_campaign","utm_source","utm_medium","utm_content","utm_term"], filterGroups: [{ filters: [{ propertyName: "lastmodifieddate", operator: "GTE", value: String($("Ventana de fechas").item.json.sinceMs) }] }] }) }}',
-      ),
+      jsonBody: {
+        limit: 100,
+        sorts: [{ propertyName: 'createdate', direction: 'DESCENDING' }],
+        properties: ['email', 'createdate', 'lifecyclestage', 'utm_campaign', 'utm_source', 'utm_medium', 'utm_content', 'utm_term', 'hs_analytics_source'],
+        filterGroups: [
+          {
+            filters: [
+              { propertyName: 'lastmodifieddate', operator: 'GTE', value: expr('{{ String($("Ventana de fechas").item.json.sinceMs) }}') },
+            ],
+          },
+        ],
+      },
+      options: {
+        pagination: {
+          pagination: {
+            paginationMode: 'updateAParameterInEachRequest',
+            parameters: {
+              parameters: [
+                { type: 'body', name: 'after', value: expr('{{ $response.body.paging?.next?.after }}') },
+              ],
+            },
+            paginationCompleteWhen: 'other',
+            completeExpression: expr('{{ !$response.body.paging?.next?.after }}'),
+            limitPagesFetched: true,
+            maxRequests: 10,
+            requestInterval: 300,
+          },
+        },
+      },
     },
     onError: 'continueErrorOutput',
     position: [1560, 180],
   },
-  output: [{ results: [{ id: '', properties: { email: '', createdate: '', lifecyclestage: '', utm_campaign: '', utm_source: '', utm_medium: '', utm_content: '', utm_term: '' } }], paging: { next: { after: '' } } }],
+  output: [{ results: [{ id: '', properties: { email: '', createdate: '', lifecyclestage: '', utm_campaign: '', utm_source: '', utm_medium: '', utm_content: '', utm_term: '', hs_analytics_source: '' } }], paging: { next: { after: '' } } }],
+})
+
+// El nodo anterior emite un item por cada página pedida (paginación nativa
+// del HTTP Request) — se unen en un único item antes de seguir la cadena,
+// porque el resto del workflow (y "Transformar a SQL upsert" en particular)
+// da por hecho 1 item = 1 cliente.
+const flattenContacts = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Unir paginas de contactos',
+    parameters: {
+      mode: 'runOnceForAllItems',
+      language: 'javaScript',
+      jsCode: `const results = [];
+for (const item of $input.all()) {
+  results.push(...((item.json && item.json.results) || []));
+}
+return [{ json: { results } }];`,
+    },
+    position: [1780, 180],
+  },
+  output: [{ results: [{ id: '', properties: { email: '' } }] }],
 })
 
 const fetchDeals = node({
@@ -271,14 +336,59 @@ const fetchDeals = node({
       },
       sendBody: true,
       specifyBody: 'json',
-      jsonBody: expr(
-        '{{ JSON.stringify({ limit: 100, sorts: [{ propertyName: "createdate", direction: "DESCENDING" }], properties: ["dealname","amount","dealstage","pipeline","createdate","closedate","hs_is_closed","hs_is_closed_won"], filterGroups: [{ filters: [{ propertyName: "hs_lastmodifieddate", operator: "GTE", value: String($("Ventana de fechas").item.json.sinceMs) }] }] }) }}',
-      ),
+      jsonBody: {
+        limit: 100,
+        sorts: [{ propertyName: 'createdate', direction: 'DESCENDING' }],
+        properties: ['dealname', 'amount', 'dealstage', 'pipeline', 'createdate', 'closedate', 'hs_is_closed', 'hs_is_closed_won'],
+        filterGroups: [
+          {
+            filters: [
+              { propertyName: 'hs_lastmodifieddate', operator: 'GTE', value: expr('{{ String($("Ventana de fechas").item.json.sinceMs) }}') },
+            ],
+          },
+        ],
+      },
+      options: {
+        pagination: {
+          pagination: {
+            paginationMode: 'updateAParameterInEachRequest',
+            parameters: {
+              parameters: [
+                { type: 'body', name: 'after', value: expr('{{ $response.body.paging?.next?.after }}') },
+              ],
+            },
+            paginationCompleteWhen: 'other',
+            completeExpression: expr('{{ !$response.body.paging?.next?.after }}'),
+            limitPagesFetched: true,
+            maxRequests: 10,
+            requestInterval: 300,
+          },
+        },
+      },
     },
     onError: 'continueErrorOutput',
-    position: [1560, 340],
+    position: [2000, 180],
   },
   output: [{ results: [{ id: '', properties: { dealname: '', amount: '', dealstage: '', pipeline: '', createdate: '', closedate: '', hs_is_closed: 'false', hs_is_closed_won: 'false' } }], paging: { next: { after: '' } } }],
+})
+
+const flattenDeals = node({
+  type: 'n8n-nodes-base.code',
+  version: 2,
+  config: {
+    name: 'Unir paginas de deals',
+    parameters: {
+      mode: 'runOnceForAllItems',
+      language: 'javaScript',
+      jsCode: `const results = [];
+for (const item of $input.all()) {
+  results.push(...((item.json && item.json.results) || []));
+}
+return [{ json: { results } }];`,
+    },
+    position: [2220, 180],
+  },
+  output: [{ results: [{ id: '', properties: { dealname: '' } }] }],
 })
 
 const buildAssociationsBody = node({
@@ -293,7 +403,7 @@ const buildAssociationsBody = node({
 const inputs = deals.map((d) => ({ id: d.id }));
 return { json: { associationsBody: JSON.stringify({ inputs }), hasDeals: inputs.length > 0 } };`,
     },
-    position: [1780, 340],
+    position: [2440, 180],
   },
   output: [{ associationsBody: '{"inputs":[]}', hasDeals: false }],
 })
@@ -319,7 +429,7 @@ const fetchAssociations = node({
       jsonBody: expr('{{ $json.associationsBody }}'),
     },
     onError: 'continueErrorOutput',
-    position: [2000, 340],
+    position: [2660, 180],
   },
   output: [{ results: [{ from: { id: '' }, to: [{ toObjectId: '' }] }] }],
 })
@@ -351,18 +461,18 @@ for (const p of pipelines) {
 }
 
 // --- Contactos ---
-const contacts = ($('Buscar contactos').item.json.results) || [];
+const contacts = ($('Unir paginas de contactos').item.json.results) || [];
 const contactRows = contacts.map((c) => {
   const p = c.properties || {};
   return '(' + esc(clientId) + '::uuid, ' + esc(c.id) + ', ' + escNullable(p.email) + ', ' +
     (p.createdate ? esc(p.createdate) + '::timestamptz' : 'NULL') + ', ' + escNullable(p.lifecyclestage) + ', ' +
     escNullable(p.utm_campaign) + ', ' + escNullable(p.utm_source) + ', ' + escNullable(p.utm_medium) + ', ' +
-    escNullable(p.utm_content) + ', ' + escNullable(p.utm_term) + ')';
+    escNullable(p.utm_content) + ', ' + escNullable(p.utm_term) + ', ' + escNullable(p.hs_analytics_source) + ')';
 });
 const contactsUpsert = contactRows.length === 0 ? '' :
-  'INSERT INTO hubspot_contacts (client_id, hubspot_contact_id, email, created_at, lifecycle_stage, utm_campaign, utm_source, utm_medium, utm_content, utm_term) VALUES ' +
+  'INSERT INTO hubspot_contacts (client_id, hubspot_contact_id, email, created_at, lifecycle_stage, utm_campaign, utm_source, utm_medium, utm_content, utm_term, original_source) VALUES ' +
   contactRows.join(', ') +
-  ' ON CONFLICT (client_id, hubspot_contact_id) DO UPDATE SET email = EXCLUDED.email, created_at = EXCLUDED.created_at, lifecycle_stage = EXCLUDED.lifecycle_stage, utm_campaign = EXCLUDED.utm_campaign, utm_source = EXCLUDED.utm_source, utm_medium = EXCLUDED.utm_medium, utm_content = EXCLUDED.utm_content, utm_term = EXCLUDED.utm_term, updated_at = now();';
+  ' ON CONFLICT (client_id, hubspot_contact_id) DO UPDATE SET email = EXCLUDED.email, created_at = EXCLUDED.created_at, lifecycle_stage = EXCLUDED.lifecycle_stage, utm_campaign = EXCLUDED.utm_campaign, utm_source = EXCLUDED.utm_source, utm_medium = EXCLUDED.utm_medium, utm_content = EXCLUDED.utm_content, utm_term = EXCLUDED.utm_term, original_source = EXCLUDED.original_source, updated_at = now();';
 
 // --- Asociaciones deal -> contacto principal (to[0]) ---
 const assocResp = $('Asociaciones deal-contacto').item.json || {};
@@ -375,7 +485,7 @@ for (const a of assocResults) {
 }
 
 // --- Deals ---
-const deals = ($('Buscar deals').item.json.results) || [];
+const deals = ($('Unir paginas de deals').item.json.results) || [];
 const dealRows = deals.map((d) => {
   const p = d.properties || {};
   const stage = stageMap[p.dealstage] || { label: null, order: null, pipelineLabel: null };
@@ -399,7 +509,7 @@ const syncLogInsert = "INSERT INTO sync_logs (client_id, platform, status, recor
 
 return { json: { query: [contactsUpsert, dealsUpsert, touchDataSource, syncLogInsert].filter(Boolean).join(' '), rowCount: records } };`,
     },
-    position: [2220, 300],
+    position: [2880, 180],
   },
   output: [{ query: '', rowCount: 0 }],
 })
@@ -412,7 +522,7 @@ const upsert = node({
     parameters: { resource: 'database', operation: 'executeQuery', query: expr('{{ $json.query }}') },
     credentials: { postgres: newCredential('Supabase Postgres') },
     onError: 'continueErrorOutput',
-    position: [2440, 300],
+    position: [3100, 180],
   },
   output: [{}],
 })
@@ -430,7 +540,7 @@ const logSyncError = node({
       ),
     },
     credentials: { postgres: newCredential('Supabase Postgres') },
-    position: [2220, 560],
+    position: [2880, 420],
   },
   output: [{}],
 })
@@ -444,7 +554,7 @@ const stopOnError = node({
       errorType: 'errorMessage',
       errorMessage: expr('{{ $json.error?.message ?? "Error desconocido en la sincronizacion de HubSpot" }}'),
     },
-    position: [2440, 560],
+    position: [3100, 420],
   },
   output: [{}],
 })
@@ -457,7 +567,9 @@ export default workflow('hubspot-ingest', 'CRD - HubSpot to Supabase (ingesta di
   .to(dateWindow)
   .to(fetchPipelines.onError(logSyncError))
   .to(fetchContacts.onError(logSyncError))
+  .to(flattenContacts)
   .to(fetchDeals.onError(logSyncError))
+  .to(flattenDeals)
   .to(buildAssociationsBody)
   .to(fetchAssociations.onError(logSyncError))
   .to(transform)

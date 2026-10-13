@@ -751,6 +751,41 @@ export interface PipelineStageRow {
   deals: Array<{ dealId: string; company: string; amount: number }>
 }
 
+/** Traduce el código interno de "Fuente original de tráfico" de HubSpot
+ * (hs_analytics_source) a la etiqueta en español que se ve en su propia
+ * interfaz. Un código no mapeado (nuevo valor de HubSpot, o el sentinel
+ * "SIN_FUENTE" que usa el backend cuando el contacto no tiene fuente
+ * registrada) cae en un texto legible derivado del propio código, para no
+ * mostrar nunca un hueco en blanco. */
+const CHANNEL_LABELS: Record<string, string> = {
+  ORGANIC_SEARCH: 'Búsqueda orgánica',
+  PAID_SEARCH: 'Búsqueda de pago',
+  PAID_SOCIAL: 'Redes sociales de pago',
+  SOCIAL_MEDIA: 'Redes sociales (orgánico)',
+  EMAIL_MARKETING: 'Marketing por email',
+  REFERRALS: 'Referencias',
+  OTHER_CAMPAIGNS: 'Otras campañas',
+  DIRECT_TRAFFIC: 'Tráfico directo',
+  OFFLINE: 'Fuentes offline',
+  SIN_FUENTE: 'Sin fuente registrada',
+}
+export function formatChannelLabel(channel: string): string {
+  return CHANNEL_LABELS[channel] ?? channel.toLowerCase().replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
+}
+
+/** Fila de desglose por canal (hs_analytics_source de HubSpot): contactos
+ * del rango + sus oportunidades/adquisiciones/tasa de cierre. A diferencia
+ * de CampaignCpaRow/AdCpaRow no cruza con gasto de plataforma — el canal no
+ * siempre es de pago (orgánico, directo, referidos también cuentan). */
+export interface ChannelCpaRow {
+  channel: string
+  contactos: number
+  oportunidades: number
+  adquisiciones: number
+  tasaCierre: number | null
+  importeGanado: number
+}
+
 /** Fila de coste por oportunidad/adquisición cruzando contactos de HubSpot
  * (por utm_campaign) con el gasto real de la plataforma de pago cuyo nombre
  * de campaña coincide. `platform` es null en "Sin campaña de pago asociada"
@@ -794,7 +829,7 @@ export interface AdCpaRow {
 
 /** KPIs de cabecera de la pestaña Negocio. */
 export function computeNegocioKpis(data: {
-  totalContactos: number
+  totalInversion: number
   dealsAbiertos: number
   dealsGanados: number
   importeAbierto: number
@@ -803,9 +838,9 @@ export function computeNegocioKpis(data: {
 }): KpiData[] {
   return [
     {
-      label: 'Contactos',
-      value: formatNumber(data.totalContactos),
-      description: 'Contactos de HubSpot creados dentro del rango de fechas seleccionado.',
+      label: 'Inversión total',
+      value: formatCurrency(data.totalInversion),
+      description: 'Suma del gasto real en Google Ads y Meta Ads dentro del rango de fechas seleccionado, sumando todas las campañas (coincidan o no con un utm_campaign de HubSpot). Sustituye al conteo de contactos: ese número mezclaba tráfico de pago y orgánico, y estaba limitado por el tope de sincronización de HubSpot.',
     },
     {
       label: 'Deals abiertos',

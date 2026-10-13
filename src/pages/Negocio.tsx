@@ -2,7 +2,7 @@ import ChartCard from '@/components/shared/ChartCard'
 import KpiCard from '@/components/shared/KpiCard'
 import DataTable, { type Column } from '@/components/shared/DataTable'
 import { formatCurrency, formatNumber, formatPercent, formatRoas } from '@/lib/utils'
-import { computeNegocioKpis, type CampaignCpaRow, type AdCpaRow } from '@/data/catalog'
+import { computeNegocioKpis, formatChannelLabel, type ChannelCpaRow, type CampaignCpaRow, type AdCpaRow } from '@/data/catalog'
 import { getProvider } from '@/services'
 import { useAsyncData } from '@/lib/useAsyncData'
 import { useDateRange } from '@/lib/dateRange'
@@ -83,6 +83,56 @@ const acquisitionColumns = <R extends { inversion: number; clicks: number; leads
     sortable: true,
     description: 'Importe ganado de las adquisiciones del periodo ÷ Inversión: € de negocio cerrado por cada € invertido.',
     render: (r) => (r.roas === null ? '—' : formatRoas(r.roas)),
+  },
+]
+
+const channelColumns: Column<ChannelCpaRow>[] = [
+  {
+    key: 'channel',
+    header: 'Canal',
+    sortable: true,
+    description: 'Fuente original de tráfico del contacto en HubSpot (orgánico, redes de pago, directo, referidos...), no solo campañas de pago.',
+    render: (r) => formatChannelLabel(r.channel),
+  },
+  {
+    key: 'contactos',
+    header: 'Contactos',
+    align: 'right',
+    sortable: true,
+    description: 'Contactos de HubSpot creados en el rango seleccionado con este canal como fuente original.',
+    render: (r) => formatNumber(r.contactos),
+  },
+  {
+    key: 'oportunidades',
+    header: 'Oportunidades',
+    align: 'right',
+    sortable: true,
+    description: 'Negocios creados en el rango seleccionado, atribuidos a través del contacto principal.',
+    render: (r) => formatNumber(r.oportunidades),
+  },
+  {
+    key: 'adquisiciones',
+    header: 'Adquisiciones',
+    align: 'right',
+    sortable: true,
+    description: 'Negocios ganados cuya fecha de cierre cae en el rango seleccionado.',
+    render: (r) => formatNumber(r.adquisiciones),
+  },
+  {
+    key: 'tasaCierre',
+    header: 'Tasa de cierre',
+    align: 'right',
+    sortable: true,
+    description: 'Adquisiciones ÷ (adquisiciones + perdidos) × 100, ambos con fecha de cierre en el rango seleccionado.',
+    render: (r) => (r.tasaCierre === null ? '—' : formatPercent(r.tasaCierre)),
+  },
+  {
+    key: 'importeGanado',
+    header: 'Importe ganado',
+    align: 'right',
+    sortable: true,
+    description: 'Suma del importe de los negocios ganados de este canal cuya fecha de cierre cae en el rango seleccionado.',
+    render: (r) => formatCurrency(r.importeGanado, 0),
   },
 ]
 
@@ -199,6 +249,10 @@ export default function Negocio() {
             </div>
           ))}
         </div>
+      </ChartCard>
+
+      <ChartCard title="Contactos y tasa de cierre por canal">
+        <DataTable columns={channelColumns} data={data.byChannel} rowKey={(r) => r.channel} />
       </ChartCard>
 
       <ChartCard title="Coste por oportunidad y adquisición por campaña">

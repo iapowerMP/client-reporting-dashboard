@@ -17,6 +17,7 @@ import type {
   ProgrammaticMediumRow,
   ProgrammaticCreativeRow,
   PipelineStageRow,
+  ChannelCpaRow,
   CampaignCpaRow,
   AdCpaRow,
   KpiData,
@@ -75,6 +76,7 @@ export interface ProgrammaticData {
 export interface NegocioData {
   connected: boolean
   totalContactos: number
+  totalInversion: number
   dealsAbiertos: number
   dealsGanados: number
   dealsPerdidos: number
@@ -82,6 +84,7 @@ export interface NegocioData {
   importeGanado: number
   tasaCierre: number | null
   pipeline: PipelineStageRow[]
+  byChannel: ChannelCpaRow[]
   byCampaign: CampaignCpaRow[]
   byAd: AdCpaRow[]
 }

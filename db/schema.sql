@@ -571,6 +571,7 @@ create table if not exists hubspot_contacts (
   utm_medium          text,
   utm_content         text,                    -- ID del anuncio (Meta: ad_id)
   utm_term            text,
+  original_source     text,                    -- hs_analytics_source de HubSpot (ORGANIC_SEARCH, PAID_SOCIAL, DIRECT_TRAFFIC...)
   updated_at          timestamptz not null default now(),
   unique (client_id, hubspot_contact_id)
 );
@@ -581,6 +582,8 @@ create index if not exists idx_hubspot_contacts_client_campaign
   on hubspot_contacts (client_id, utm_campaign);
 create index if not exists idx_hubspot_contacts_client_content
   on hubspot_contacts (client_id, utm_content);
+create index if not exists idx_hubspot_contacts_client_source
+  on hubspot_contacts (client_id, original_source);
 
 create table if not exists hubspot_deals (
   id                  bigint generated always as identity primary key,
